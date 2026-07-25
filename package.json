@@ -1,0 +1,23 @@
+{
+  "name": "rezka-script",
+  "version": "1.1.0",
+  "description": "A userscript that pulls the direct video URL out of HDrezka player pages and gives you a small panel to download it, copy the link, or hand it off to Leech.",
+  "main": "rezka-downloader.user.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prvrtl/rezka-script.git"
+  },
+  "bugs": {
+    "url": "https://github.com/prvrtl/rezka-script/issues"
+  },
+  "homepage": "https://github.com/prvrtl/rezka-script#readme",
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        1.0
+// @version        1.1
 // @description    Extracts the highest non-PRO video quality from HDrezka. Supports direct downloads, copied links, and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -15,6 +15,7 @@
 // @include        http*://hdrezka*/*/*
 // @grant          GM_setClipboard
 // @grant          GM_addStyle
+// @grant          GM_download
 // @run-at         document-start
 // @homepageURL    https://github.com/prvrtl/rezka-script
 // @downloadURL    https://raw.githubusercontent.com/prvrtl/rezka-script/main/rezka-downloader.user.js
@@ -27,6 +28,9 @@
   let streams = {};
   let activeTranslator = null;
   let isOpen = false;
+  let selectedQuality = null;
+  let watchdog = null;
+  let lastError = null;
 
   const LEECH_ICON = `<svg width="14" height="14" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0"><defs><radialGradient id="rzk-lg" cx="42%" cy="32%" r="62%"><stop offset="0%" stop-color="#72e354"/><stop offset="100%" stop-color="#28a016"/></radialGradient></defs><rect width="100" height="100" rx="22" fill="url(#rzk-lg)"/><rect x="43" y="16" width="14" height="40" rx="7" fill="white"/><polygon points="50,84 20,53 80,53" fill="white"/></svg>`;
   const DL_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
@@ -47,6 +51,8 @@
     .rzk-scroll-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
     .rzk-scroll-area::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
     .rzk-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    #rzk-quals { margin-bottom: 16px; }
+    #rzk-quals:empty::before { content: 'Loading…'; color: rgba(255,255,255,0.4); font-size: 12px; }
     .rzk-chip { padding: 6px 14px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.7); cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s ease; white-space: nowrap; }
     .rzk-chip:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; }
     .rzk-chip.on { background: rgba(10, 132, 255, 0.85); border-color: rgba(10, 132, 255, 1); color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,0.3); }
@@ -77,11 +83,11 @@
   function getFlag(name) {
     const n = name.toLowerCase();
     if (/\p{Regional_Indicator}/u.test(name)) return '';
-    if (/украин|нло\s*tv|нлотв|1\+1|пряміст|ictv|інтер|новий\s*канал|ukraine|ukr\b|трейлер|колодій|парамаунт ua/.test(n)) return '🇺🇦';
-    if (/english\b|original\b|оригинал|en\s+sub/.test(n)) return '🌐';
-    if (/польск|polish/.test(n)) return '🇵🇱';
-    if (/немецк|deutsch|german/.test(n)) return '🇩🇪';
-    if (/french|французск/.test(n)) return '🇫🇷';
+    if (/україн|украин|\bukr|ukraine|нло\s*tv|нлотв|1\+1|пряміст|ictv|інтер|новий\s*канал|так\s*треба|цікава\s*ідея|постмодерн|дніпрофільм|колодій|парамаунт\s*ua/.test(n)) return '🇺🇦';
+    if (/english\b|original\b|оригинал|оригінал|en\s+sub/.test(n)) return '🌐';
+    if (/польск|польськ|polish/.test(n)) return '🇵🇱';
+    if (/немецк|німецьк|deutsch|german/.test(n)) return '🇩🇪';
+    if (/french|французск|французьк/.test(n)) return '🇫🇷';
     return '';
   }
 
@@ -109,15 +115,44 @@
     return res;
   }
 
-  function getBestNonProStream(streamsObj) {
-    let bestQ = null, bestUrl = null, maxRes = -1;
-    for (const [q, data] of Object.entries(streamsObj || {})) {
-      if (data.isPro) continue;
-      const resMatch = q.match(/\d+/);
-      const res = resMatch ? parseInt(resMatch[0]) : 0;
-      if (res > maxRes) { maxRes = res; bestQ = q; bestUrl = data.url; }
+  function qualityRank(label) {
+    const l = label.toLowerCase();
+    if (/4k|uhd|2160/.test(l)) return 2160;
+    if (/2k|1440/.test(l)) return 1440;
+    if (/1080|full\s*hd|fhd/.test(l)) return 1080;
+    if (/720|\bhd\b/.test(l)) return 720;
+    if (/480|\bsd\b/.test(l)) return 480;
+    if (/360/.test(l)) return 360;
+    if (/240/.test(l)) return 240;
+    const n = l.match(/\d{3,4}/);
+    return n ? parseInt(n[0]) : 0;
+  }
+
+  function freeQualities(streamsObj) {
+    return Object.entries(streamsObj || {})
+      .filter(([, data]) => !data.isPro)
+      .sort((a, b) => qualityRank(b[0]) - qualityRank(a[0]));
+  }
+
+  function activeStreams() {
+    return streams[activeTranslator || Object.keys(streams)[0]];
+  }
+
+  function saveAs(url, filename) {
+    if (typeof GM_download === 'function') {
+      GM_download({ url, name: filename, saveAs: false, onerror: () => linkDownload(url, filename) });
+      return;
     }
-    return { quality: bestQ, url: bestUrl };
+    linkDownload(url, filename);
+  }
+
+  function linkDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   function fetchStreamsFor(tid) {
@@ -136,11 +171,38 @@
         if (data.success && data.url) {
           streams[tid] = parseStreams(data.url);
           activeTranslator = tid;
+          lastError = null;
+        } else {
+          lastError = 'Site returned no stream';
+        }
+      } catch(e) {
+        lastError = 'Unreadable response';
+      }
+      updateUI();
+    };
+    xhr.onerror = () => { lastError = 'Request failed'; updateUI(); };
+    xhr.send(params.toString());
+  }
+
+  function armWatchdog() {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      const tid = activeTranslator;
+      if (tid && !streams[tid]) fetchStreamsFor(tid);
+      watchdog = setTimeout(() => {
+        if (activeTranslator && !streams[activeTranslator]) {
+          lastError = 'No response — reload the page';
           updateUI();
         }
-      } catch(e) {}
-    };
-    xhr.send(params.toString());
+      }, 8000);
+    }, 1500);
+  }
+
+  function invalidate() {
+    if (activeTranslator) delete streams[activeTranslator];
+    lastError = null;
+    updateUI();
+    armWatchdog();
   }
 
   function autoSelectBestTranslator() {
@@ -216,6 +278,12 @@
     }).join('');
   }
 
+  function renderQualities(list) {
+    return list.map(([q]) =>
+      `<span class="rzk-chip${q === selectedQuality ? ' on' : ''}" data-q="${q}">${q}</span>`
+    ).join('');
+  }
+
   function updateUI() {
     const chipsWrap = document.getElementById('rzk-trans');
     if (chipsWrap) chipsWrap.innerHTML = renderTranslators();
@@ -223,52 +291,52 @@
     const btnDl = document.getElementById('rzk-action-dl');
     const btnLeech = document.getElementById('rzk-action-leech');
     const btnCopy = document.getElementById('rzk-action-copy');
+    const qualWrap = document.getElementById('rzk-quals');
     if (!btnDl || !btnLeech || !btnCopy) return;
 
-    const tidToUse = activeTranslator || Object.keys(streams)[0];
-    const currentStreams = streams[tidToUse];
+    const disable = state => { btnDl.disabled = state; btnLeech.disabled = state; btnCopy.disabled = state; };
+    const set = activeStreams();
 
-    if (!currentStreams || Object.keys(currentStreams).length === 0) {
-      btnDl.disabled = true; btnLeech.disabled = true; btnCopy.disabled = true;
-      btnDl.innerHTML = '⏳ Waiting...';
+    if (!set || Object.keys(set).length === 0) {
+      disable(true);
+      btnDl.innerHTML = lastError ? `⚠️ ${lastError}` : '⏳ Waiting...';
       btnLeech.innerHTML = `${LEECH_ICON} Leech`;
+      if (qualWrap) qualWrap.innerHTML = '';
       return;
     }
 
-    const best = getBestNonProStream(currentStreams);
-    if (!best.url) {
-      btnDl.disabled = true; btnLeech.disabled = true; btnCopy.disabled = true;
+    const list = freeQualities(set);
+    if (list.length === 0) {
+      disable(true);
       btnDl.innerHTML = '❌ No free quality';
+      if (qualWrap) qualWrap.innerHTML = '';
       return;
     }
 
-    btnDl.disabled = false; btnLeech.disabled = false; btnCopy.disabled = false;
-    btnDl.innerHTML = `${DL_ICON} Download <span>(${best.quality})</span>`;
+    if (!list.some(([q]) => q === selectedQuality)) selectedQuality = list[0][0];
+    const url = list.find(([q]) => q === selectedQuality)[1].url;
+    if (qualWrap) qualWrap.innerHTML = renderQualities(list);
+
+    disable(false);
+    btnDl.innerHTML = `${DL_ICON} Download <span>(${selectedQuality})</span>`;
     btnLeech.innerHTML = `${LEECH_ICON} Leech`;
 
     btnDl.onclick = () => {
-      const filename = makeFilename(best.quality);
-      const a = document.createElement('a');
-      a.href = best.url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast(`⬇️ Downloading: ${best.quality}`);
+      saveAs(url, makeFilename(selectedQuality));
+      toast(`⬇️ Downloading: ${selectedQuality}`);
     };
 
     btnLeech.onclick = () => {
-      const filename = makeFilename(best.quality);
-      GM_setClipboard(filename);
+      GM_setClipboard(makeFilename(selectedQuality));
       toast(`🚀 Sent to Leech!`);
-      const leechUrl = best.url.replace(/^https?:\/\//, match => match.includes('https') ? 'secureleech://' : 'leech://');
+      const leechUrl = url.replace(/^https?:\/\//, match => match.includes('https') ? 'secureleech://' : 'leech://');
       const a = document.createElement('a');
       a.href = leechUrl;
       a.click();
     };
 
     btnCopy.onclick = () => {
-      GM_setClipboard(best.url);
+      GM_setClipboard(url);
       toast(`📋 Direct link copied!`);
     }
   }
@@ -286,6 +354,8 @@
         <div class="rzk-scroll-area">
           <div class="rzk-chips" id="rzk-trans">${renderTranslators()}</div>
         </div>
+        <div class="rzk-lbl">QUALITY</div>
+        <div class="rzk-chips" id="rzk-quals"></div>
         <hr>
         <div id="rzk-actions">
           <button id="rzk-action-dl" class="rzk-btn rzk-btn-dl" disabled>⏳ Waiting...</button>
@@ -316,8 +386,17 @@
       if (nativeTab) {
         nativeTab.click();
         activeTranslator = tid;
+        lastError = null;
         updateUI();
+        if (!streams[tid]) armWatchdog();
       }
+    });
+
+    wrap.querySelector('#rzk-quals').addEventListener('click', e => {
+      const chip = e.target.closest('.rzk-chip[data-q]');
+      if (!chip) return;
+      selectedQuality = chip.dataset.q;
+      updateUI();
     });
   }
 
@@ -340,8 +419,10 @@
               const params = typeof savedBody === 'string' ? new URLSearchParams(savedBody) : null;
               const tid = params?.get('translator_id') || document.querySelector('.b-translator__item.active')?.dataset?.translator_id;
               if (tid) {
+                clearTimeout(watchdog);
                 streams[tid] = parseStreams(data.url);
                 activeTranslator = tid;
+                lastError = null;
                 updateUI();
               }
             }
@@ -385,12 +466,7 @@
 
     document.addEventListener('click', e => {
       if (e.target.closest('.b-simple_season__item') || e.target.closest('.b-simple_episode__item')) {
-        const btnDl = document.getElementById('rzk-action-dl');
-        const btnLeech = document.getElementById('rzk-action-leech');
-        const btnCopy = document.getElementById('rzk-action-copy');
-        if (btnDl) { btnDl.disabled = true; btnDl.innerHTML = '⏳ Waiting...'; }
-        if (btnLeech) { btnLeech.disabled = true; }
-        if (btnCopy) { btnCopy.disabled = true; }
+        invalidate();
       }
     }, true);
 
