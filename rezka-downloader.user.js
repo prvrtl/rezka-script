@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        2.0
+// @version        2.1
 // @description    Extracts the highest non-PRO video quality from HDrezka. Supports direct downloads, copied links, and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -266,72 +266,134 @@
 
   const CSS = `
     :host { all: initial; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    .root { position: fixed; right: 24px; bottom: 24px; z-index: 2147483000; width: 340px;
-            display: flex; flex-direction: column; align-items: stretch; gap: 12px;
-            font-size: 13px; line-height: 1.4; color: #f0f0f5; -webkit-font-smoothing: antialiased; }
-    .panel { background: rgba(20,20,30,0.72); backdrop-filter: blur(24px) saturate(180%);
-             -webkit-backdrop-filter: blur(24px) saturate(180%);
-             border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 16px;
-             box-shadow: 0 24px 48px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
-             transform-origin: bottom right; transition: opacity .25s ease, transform .25s cubic-bezier(.16,1,.3,1); }
-    .panel[hidden] { display: none; }
-    .panel.enter { opacity: 0; transform: translateY(8px) scale(.98); }
-    .heading { font-weight: 600; font-size: 13px; color: rgba(255,255,255,.92);
-               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 14px; }
-    .group { margin-bottom: 14px; }
-    .group h2 { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-                color: rgba(255,255,255,.5); margin-bottom: 8px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; max-height: 132px; overflow-y: auto; }
-    .chips::-webkit-scrollbar { width: 6px; }
-    .chips::-webkit-scrollbar-thumb { background: rgba(255,255,255,.2); border-radius: 10px; }
-    .chip { padding: 6px 14px; border-radius: 14px; cursor: pointer; white-space: nowrap;
-            font-size: 12px; font-weight: 500; color: rgba(255,255,255,.7);
-            background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
-            transition: background .2s, border-color .2s, color .2s; }
-    .chip:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.2); color: #fff; }
-    .chip[aria-pressed="true"] { background: rgba(10,132,255,.85); border-color: rgba(10,132,255,1);
-                                 color: #fff; box-shadow: 0 4px 12px rgba(10,132,255,.3); }
-    .chip:focus-visible, .btn:focus-visible, .pill:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
-    .empty { font-size: 12px; color: rgba(255,255,255,.4); }
-    .status { font-size: 12px; margin-bottom: 12px; color: rgba(255,255,255,.55); }
-    .status.error { color: #ff9f9f; }
-    .actions { display: flex; gap: 8px; align-items: stretch; }
-    .btn { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
-           border-radius: 12px; font-size: 13px; font-weight: 600; padding: 10px 4px;
-           border: 1px solid transparent; transition: background .2s, border-color .2s, transform .1s; }
-    .btn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(100%); }
-    .btn:active:not(:disabled) { transform: scale(.96); }
-    .btn-dl { flex: 1.2; background: rgba(10,132,255,.85); color: #fff; border-color: rgba(255,255,255,.1); }
-    .btn-dl:hover:not(:disabled) { background: rgba(10,132,255,1); }
-    .btn-leech { flex: 1; background: rgba(48,209,88,.15); color: rgb(48,209,88); border-color: rgba(48,209,88,.3); }
-    .btn-leech:hover:not(:disabled) { background: rgba(48,209,88,.25); color: #fff; }
-    .btn-copy { width: 44px; background: rgba(255,255,255,.08); color: rgba(255,255,255,.8); border-color: rgba(255,255,255,.1); }
-    .btn-copy:hover:not(:disabled) { background: rgba(255,255,255,.15); color: #fff; }
-    .pill { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer;
-            align-self: flex-end; padding: 12px 20px; border-radius: 24px; font-weight: 600; font-size: 14px;
-            letter-spacing: .3px; color: #fff; background: rgba(20,20,30,.75);
-            backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
-            border: 1px solid rgba(255,255,255,.12);
-            box-shadow: 0 8px 24px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.1);
-            transition: background .2s, transform .1s; }
-    .pill:hover { background: rgba(35,35,50,.8); }
-    .pill:active { transform: scale(.97); }
-    .toast { position: fixed; right: 24px; bottom: 96px; padding: 12px 20px; border-radius: 14px;
-             background: rgba(20,20,30,.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-             border: 1px solid rgba(255,255,255,.15); color: #fff; font-size: 13px; font-weight: 500;
-             box-shadow: 0 12px 32px rgba(0,0,0,.4); pointer-events: none; animation: pop .35s cubic-bezier(.16,1,.3,1); }
-    @keyframes pop { from { opacity: 0; transform: translateY(16px) scale(.92); } to { opacity: 1; transform: none; } }
+    * { box-sizing: border-box; margin: 0; padding: 0; font: inherit; color: inherit; }
+    .root {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px; line-height: 1.45; color: #f2f2f4;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .card {
+      width: 272px; padding: 8px;
+      background: rgba(24,24,27,0.96);
+      -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 16px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+      transition: opacity .16s ease, transform .16s ease;
+    }
+    .card[hidden] { display: none; }
+    .card.enter { opacity: 0; transform: translateY(6px); }
+
+    .row { position: relative; }
+
+    .field {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 9px 10px; border: 0; border-radius: 10px; cursor: pointer;
+      background: transparent; text-align: left;
+      transition: background .12s ease;
+    }
+    .field:hover { background: rgba(255,255,255,0.05); }
+    .field .k { font-size: 11px; color: rgba(255,255,255,0.4); flex: none; }
+    .field .v { margin-left: auto; font-size: 13px; font-weight: 500;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .field .chev { flex: none; opacity: .35; transition: transform .16s ease; }
+    .field[aria-expanded="true"] .chev { transform: rotate(180deg); }
+    .field:disabled { cursor: default; opacity: .45; }
+    .field:disabled:hover { background: transparent; }
+
+    .menu {
+      position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 2;
+      max-height: 216px; overflow-y: auto; padding: 4px;
+      background: rgba(38,38,42,0.99);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    }
+    .menu[hidden] { display: none; }
+    .menu::-webkit-scrollbar { width: 6px; }
+    .menu::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+
+    .opt {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 8px 10px; border: 0; border-radius: 8px; cursor: pointer;
+      background: transparent; text-align: left; font-size: 13px;
+    }
+    .opt:hover { background: rgba(255,255,255,0.07); }
+    .opt .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .opt .tick { margin-left: auto; flex: none; opacity: 0; }
+    .opt[aria-selected="true"] .tick { opacity: 1; }
+    .opt[aria-selected="true"] { color: #4da3ff; }
+
+    .sep { height: 1px; margin: 6px 4px; background: rgba(255,255,255,0.07); }
+
+    .status { padding: 2px 10px 8px; font-size: 12px; color: rgba(255,255,255,0.4); }
+    .status[hidden] { display: none; }
+    .status.error { color: #ff8f8f; }
+
+    .primary {
+      display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%;
+      padding: 11px; border: 0; border-radius: 10px; cursor: pointer;
+      background: #0a84ff; color: #fff; font-size: 13px; font-weight: 600;
+      transition: background .12s ease, opacity .12s ease;
+    }
+    .primary:hover:not(:disabled) { background: #2b95ff; }
+    .primary:active:not(:disabled) { background: #0070e0; }
+    .primary:disabled { cursor: default; opacity: .35; }
+
+    .minor { display: flex; align-items: center; justify-content: center; gap: 2px; padding-top: 4px; }
+    .minor button {
+      padding: 7px 10px; border: 0; border-radius: 8px; cursor: pointer;
+      background: transparent; color: rgba(255,255,255,0.5); font-size: 12px;
+      transition: color .12s ease, background .12s ease;
+    }
+    .minor button:hover:not(:disabled) { color: #fff; background: rgba(255,255,255,0.06); }
+    .minor button:disabled { cursor: default; opacity: .35; }
+    .minor .dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.2); }
+
+    .trigger {
+      display: grid; place-items: center; width: 42px; height: 42px; flex: none;
+      border-radius: 50%; cursor: pointer; color: #f2f2f4;
+      background: rgba(24,24,27,0.96);
+      -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+      transition: background .12s ease, transform .1s ease;
+    }
+    .trigger:hover { background: rgba(42,42,48,0.98); }
+    .trigger:active { transform: scale(.94); }
+    .trigger .badge {
+      position: absolute; top: -2px; right: -2px; width: 8px; height: 8px;
+      border-radius: 50%; background: #0a84ff; border: 2px solid rgba(24,24,27,1);
+    }
+    .trigger .badge[hidden] { display: none; }
+
+    .toast {
+      position: fixed; right: 20px; bottom: 74px;
+      padding: 8px 14px; border-radius: 10px;
+      background: rgba(38,38,42,0.98); border: 1px solid rgba(255,255,255,0.1);
+      font-size: 12px; color: #f2f2f4; pointer-events: none;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      animation: rise .18s ease;
+    }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
   `;
 
-  const LEECH_ICON = `<svg width="14" height="14" viewBox="0 0 100 100" aria-hidden="true" style="display:block;flex-shrink:0"><defs><radialGradient id="lg" cx="42%" cy="32%" r="62%"><stop offset="0%" stop-color="#72e354"/><stop offset="100%" stop-color="#28a016"/></radialGradient></defs><rect width="100" height="100" rx="22" fill="url(#lg)"/><rect x="43" y="16" width="14" height="40" rx="7" fill="white"/><polygon points="50,84 20,53 80,53" fill="white"/></svg>`;
-  const DL_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+  const ICON = {
+    down: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13"/><path d="m6 11 6 6 6-6"/><path d="M4 21h16"/></svg>',
+    chev: '<svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+    tick: '<svg class="tick" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg>'
+  };
 
   const ui = {
     root: null,
     shadow: null,
     el: {},
+    menu: null,          // which menu is open: 'qualities' | 'translators' | null
 
     mount() {
       if (document.getElementById('rzk-root')) return;
@@ -348,25 +410,42 @@
       const root = document.createElement('div');
       root.className = 'root';
       root.innerHTML = `
-        <section class="panel" part="panel" role="dialog" aria-label="Rezka Downloader" hidden>
-          <p class="heading" data-el="heading"></p>
-          <div class="group">
-            <h2 id="rzk-lbl-voice">Voiceover</h2>
-            <div class="chips" data-el="translators" role="group" aria-labelledby="rzk-lbl-voice"></div>
+        <section class="card" id="rzk-card" role="dialog" aria-label="Rezka Downloader" hidden>
+          <div class="row">
+            <button class="field" type="button" data-el="qualityField" data-menu="qualities"
+                    aria-haspopup="listbox" aria-expanded="false" aria-controls="rzk-menu-q" disabled>
+              <span class="k">Quality</span>
+              <span class="v" data-el="qualityValue">—</span>
+              ${ICON.chev}
+            </button>
+            <div class="menu" id="rzk-menu-q" data-el="qualities" role="listbox" aria-label="Quality" hidden></div>
           </div>
-          <div class="group">
-            <h2 id="rzk-lbl-quality">Quality</h2>
-            <div class="chips" data-el="qualities" role="group" aria-labelledby="rzk-lbl-quality"></div>
+          <div class="row">
+            <button class="field" type="button" data-el="voiceField" data-menu="translators"
+                    aria-haspopup="listbox" aria-expanded="false" aria-controls="rzk-menu-v">
+              <span class="k">Voice</span>
+              <span class="v" data-el="voiceValue">—</span>
+              ${ICON.chev}
+            </button>
+            <div class="menu" id="rzk-menu-v" data-el="translators" role="listbox" aria-label="Voiceover" hidden></div>
           </div>
-          <p class="status" data-el="status" role="status" aria-live="polite"></p>
-          <div class="actions">
-            <button class="btn btn-dl" data-el="download" data-act="download" type="button" disabled></button>
-            <button class="btn btn-leech" data-el="leech" data-act="leech" type="button" disabled></button>
-            <button class="btn btn-copy" data-el="copy" data-act="copy" type="button" disabled title="Copy link" aria-label="Copy link">📋</button>
+
+          <div class="sep"></div>
+          <p class="status" data-el="status" role="status" aria-live="polite" hidden></p>
+
+          <button class="primary" type="button" data-el="download" data-act="download" disabled>
+            ${ICON.down}<span>Download</span>
+          </button>
+          <div class="minor">
+            <button type="button" data-el="copy" data-act="copy" disabled>Copy link</button>
+            <span class="dot"></span>
+            <button type="button" data-el="leech" data-act="leech" disabled>Leech</button>
           </div>
         </section>
-        <button class="pill" data-el="pill" type="button" aria-expanded="false" aria-controls="rzk-panel">
-          <span>Rezka DL</span>${DL_ICON}
+
+        <button class="trigger" type="button" data-el="pill" aria-expanded="false"
+                aria-controls="rzk-card" aria-label="Rezka Downloader" title="Rezka Downloader">
+          ${ICON.down}<span class="badge" data-el="badge" hidden></span>
         </button>`;
 
       shadow.append(style, root);
@@ -375,8 +454,7 @@
       ui.root = host;
       ui.shadow = shadow;
       for (const el of root.querySelectorAll('[data-el]')) ui.el[el.dataset.el] = el;
-      ui.el.panel = root.querySelector('.panel');
-      ui.el.panel.id = 'rzk-panel';
+      ui.el.card = root.querySelector('.card');
 
       ui.bind();
       ui.setOpen(store.open, { silent: true });
@@ -386,74 +464,103 @@
     bind() {
       ui.el.pill.addEventListener('click', () => ui.setOpen(!store.open));
 
-      ui.el.translators.addEventListener('click', e => {
-        const chip = e.target.closest('.chip[data-id]');
-        if (!chip) return;
-        actions.chooseTranslator(chip.dataset.id);
-      });
+      for (const field of [ui.el.qualityField, ui.el.voiceField]) {
+        field.addEventListener('click', () => ui.openMenu(ui.menu === field.dataset.menu ? null : field.dataset.menu));
+      }
 
       ui.el.qualities.addEventListener('click', e => {
-        const chip = e.target.closest('.chip[data-label]');
-        if (!chip) return;
-        actions.chooseQuality(chip.dataset.label);
+        const opt = e.target.closest('.opt[data-label]');
+        if (!opt) return;
+        actions.chooseQuality(opt.dataset.label);
+        ui.openMenu(null);
       });
 
-      for (const el of [ui.el.download, ui.el.leech, ui.el.copy]) {
+      ui.el.translators.addEventListener('click', e => {
+        const opt = e.target.closest('.opt[data-id]');
+        if (!opt) return;
+        actions.chooseTranslator(opt.dataset.id);
+        ui.openMenu(null);
+      });
+
+      for (const el of [ui.el.download, ui.el.copy, ui.el.leech]) {
         el.addEventListener('click', () => actions.run(el.dataset.act));
       }
 
       ui.shadow.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && store.open) { ui.setOpen(false); ui.el.pill.focus(); }
+        if (e.key !== 'Escape') return;
+        if (ui.menu) ui.openMenu(null);
+        else if (store.open) { ui.setOpen(false); ui.el.pill.focus(); }
       });
+
+      // A click anywhere else dismisses an open menu.
+      document.addEventListener('click', e => {
+        if (ui.menu && !e.composedPath().includes(ui.root)) ui.openMenu(null);
+      }, true);
+    },
+
+    openMenu(name) {
+      ui.menu = name;
+      for (const [key, field] of [['qualities', ui.el.qualityField], ['translators', ui.el.voiceField]]) {
+        const open = key === name;
+        ui.el[key].hidden = !open;
+        field.setAttribute('aria-expanded', String(open));
+      }
     },
 
     setOpen(open, { silent = false } = {}) {
       store.open = open;
       prefs.set(PREF_OPEN, open);
-      ui.el.panel.hidden = !open;
+      ui.el.card.hidden = !open;
       ui.el.pill.setAttribute('aria-expanded', String(open));
+      if (!open) ui.openMenu(null);
       if (open && !silent) {
-        ui.el.panel.classList.add('enter');
-        requestAnimationFrame(() => ui.el.panel.classList.remove('enter'));
+        ui.el.card.classList.add('enter');
+        requestAnimationFrame(() => ui.el.card.classList.remove('enter'));
       }
-    },
-
-    chip(attrs, label, pressed) {
-      return `<button class="chip" type="button" role="radio" aria-pressed="${pressed}" ${attrs}>${label}</button>`;
+      ui.render();
     },
 
     render() {
       if (!ui.root) return;
 
-      ui.el.heading.textContent = site.originalTitle();
-      ui.el.heading.title = site.originalTitle();
-
-      const translators = actions.translatorList();
-      ui.el.translators.innerHTML = translators.length
-        ? translators.map(t => {
-            const flag = flagFor(t.name);
-            return ui.chip(`data-id="${t.id}"`, `${flag ? flag + ' ' : ''}${escapeHtml(t.name)}`, t.id === store.translator);
-          }).join('')
-        : '<span class="empty">No voiceovers found</span>';
-
       const free = store.free();
       const picked = store.selected();
-      ui.el.qualities.innerHTML = free.length
-        ? free.map(s => ui.chip(`data-label="${escapeHtml(s.label)}"`, escapeHtml(s.label), s === picked)).join('')
-        : `<span class="empty">${store.current() ? 'No free quality' : '—'}</span>`;
+      const voices = actions.translatorList();
+      const voice = voices.find(t => t.id === store.translator) || voices[0] || null;
 
-      const status = store.status;
-      ui.el.status.textContent = status ? status.text : '';
-      ui.el.status.classList.toggle('error', status?.kind === 'error');
+      ui.el.qualityValue.textContent = picked ? picked.label : '—';
+      ui.el.qualityField.disabled = free.length < 2;
+      ui.el.qualities.innerHTML = free.map(s => `
+        <button class="opt" type="button" role="option" data-label="${escapeHtml(s.label)}"
+                aria-selected="${s === picked}">
+          <span class="name">${escapeHtml(s.label)}</span>${ICON.tick}
+        </button>`).join('');
+
+      const voiceLabel = voice ? `${flagFor(voice.name) ? flagFor(voice.name) + ' ' : ''}${voice.name}` : '—';
+      ui.el.voiceValue.textContent = voiceLabel;
+      ui.el.voiceValue.title = voiceLabel;
+      ui.el.voiceField.disabled = voices.length < 2;
+      ui.el.translators.innerHTML = voices.map(t => {
+        const flag = flagFor(t.name);
+        return `
+        <button class="opt" type="button" role="option" data-id="${escapeHtml(t.id)}"
+                aria-selected="${t.id === store.translator}">
+          <span class="name">${flag ? flag + ' ' : ''}${escapeHtml(t.name)}</span>${ICON.tick}
+        </button>`;
+      }).join('');
+
+      // Only ever say something when there is something to say.
+      const note = store.status
+        || (store.current() && !free.length ? { kind: 'error', text: 'No free quality' } : null);
+      ui.el.status.hidden = !note;
+      ui.el.status.textContent = note ? note.text : '';
+      ui.el.status.classList.toggle('error', note?.kind === 'error');
 
       const ready = Boolean(picked);
       ui.el.download.disabled = !ready;
-      ui.el.leech.disabled = !ready;
       ui.el.copy.disabled = !ready;
-      ui.el.download.innerHTML = ready
-        ? `${DL_ICON} Download <span>(${escapeHtml(picked.label)})</span>`
-        : `${DL_ICON} Download`;
-      ui.el.leech.innerHTML = `${LEECH_ICON} Leech`;
+      ui.el.leech.disabled = !ready;
+      ui.el.badge.hidden = !ready || store.open;
     },
 
     toast(message) {
@@ -462,7 +569,7 @@
       el.className = 'toast';
       el.textContent = message;
       ui.shadow.querySelector('.root').appendChild(el);
-      setTimeout(() => el.remove(), 2500);
+      setTimeout(() => el.remove(), 2200);
     }
   };
 
@@ -548,7 +655,7 @@
 
       if (kind === 'copy') {
         GM_setClipboard(picked.url);
-        ui.toast('Direct link copied');
+        ui.toast('Link copied');
         return;
       }
       if (kind === 'leech') {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { load, settle, cdnPayload, shadow, el, chips, chipLabels } from './harness.mjs';
+import { load, settle, cdnPayload, shadow, el, opts, optLabels, chosen, value } from './harness.mjs';
 import { seriesPage, moviePage, streamList } from './fixtures.mjs';
 
 /** Emulate the site's own AJAX call so the script's XHR intercept picks it up. */
@@ -14,8 +14,11 @@ function deliverStreams(window, { tid = '56', url, season = '2', episode = '5' }
 }
 
 const dl = (doc) => el(doc, 'download');
-const pick = (doc, group, label) =>
-  chips(doc, group).find((c) => c.textContent.trim().includes(label));
+const card = (doc) => shadow(doc).querySelector('.card');
+const option = (doc, menu, label) =>
+  opts(doc, menu).find((o) => o.textContent.trim().includes(label));
+
+// ----------------------------------------------------------------- mount ----
 
 test('panel mounts on a page that has a post id', async () => {
   const { doc } = load(seriesPage());
@@ -41,13 +44,15 @@ test('panel stays out of pages that are not watchable', async () => {
   assert.equal(doc.getElementById('rzk-root'), null);
 });
 
+// -------------------------------------------------------------- selection ----
+
 test('PRO qualities are never offered', async () => {
   const { doc, window } = load(seriesPage());
   await settle(200);
   deliverStreams(window, { url: streamList.withPro });
 
-  assert.deepEqual(chipLabels(doc, 'qualities'), ['720p', '360p'], 'PRO tiers excluded, best first');
-  assert.match(dl(doc).textContent, /720p/);
+  assert.deepEqual(optLabels(doc, 'qualities'), ['720p', '360p'], 'PRO tiers excluded, best first');
+  assert.equal(value(doc, 'quality'), '720p');
   assert.equal(dl(doc).disabled, false);
 });
 
@@ -57,8 +62,65 @@ test('a PRO-only release offers nothing rather than a dead link', async () => {
   deliverStreams(window, { url: streamList.proOnly });
 
   assert.equal(dl(doc).disabled, true);
-  assert.match(el(doc, 'qualities').textContent, /No free quality/i);
+  assert.equal(value(doc, 'quality'), '—');
+  assert.match(el(doc, 'status').textContent, /No free quality/i);
 });
+
+test('a "4K" label outranks 720p', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.fourK });
+
+  assert.deepEqual(optLabels(doc, 'qualities'), ['4K', '720p', '360p']);
+  assert.equal(value(doc, 'quality'), '4K');
+});
+
+test('a Ukrainian-spelled voiceover is auto-selected', async () => {
+  const { doc } = load(seriesPage());
+  await settle(200);
+
+  assert.match(value(doc, 'voice'), /Українська/);
+  assert.match(chosen(doc, 'translators').textContent, /Українська/);
+});
+
+test('premium voiceovers are dropped from the list', async () => {
+  const { doc } = load(seriesPage());
+  await settle(200);
+
+  const labels = optLabels(doc, 'translators');
+  assert.equal(labels.some((l) => /PRO/.test(l)), false, 'PRO voiceover should not be listed');
+  assert.equal(labels.length, 2);
+});
+
+test('picking a lower quality changes both the link and the filename', async () => {
+  const { doc, window, effects } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  option(doc, 'qualities', '360p').click();
+  dl(doc).click();
+
+  assert.equal(value(doc, 'quality'), '360p');
+  assert.deepEqual(effects.anchorClicks.at(-1), {
+    href: 'https://cdn.example.net/a_360.mp4',
+    download: 'The.Example.Show.2021.S02E05.360p.mp4',
+  });
+});
+
+test('a chosen quality is kept when switching voiceover', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { tid: '56', url: streamList.plain });
+
+  option(doc, 'qualities', '720p').click();
+  option(doc, 'translators', 'Українська').click();
+  deliverStreams(window, { tid: '57', url: streamList.plain });
+
+  assert.equal(value(doc, 'quality'), '720p', 'preference should carry across tracks');
+  assert.match(value(doc, 'voice'), /Українська/);
+});
+
+// ---------------------------------------------------------------- actions ----
 
 test('HLS manifest suffix is stripped down to the plain file URL', async () => {
   const { doc, window, effects } = load(seriesPage());
@@ -113,59 +175,6 @@ test('leech handoff rewrites https to the secureleech scheme', async () => {
   assert.equal(effects.anchorClicks.at(-1).href, 'secureleech://cdn.example.net/a_1080.mp4');
 });
 
-test('a "4K" label outranks 720p', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.fourK });
-
-  assert.deepEqual(chipLabels(doc, 'qualities'), ['4K', '720p', '360p']);
-  assert.match(dl(doc).textContent, /4K/);
-});
-
-test('a Ukrainian-spelled voiceover is auto-selected', async () => {
-  const { doc } = load(seriesPage());
-  await settle(200);
-
-  const on = chips(doc, 'translators').find((c) => c.getAttribute('aria-pressed') === 'true');
-  assert.ok(on, 'some voiceover should be marked active');
-  assert.match(on.textContent, /Українська/);
-});
-
-test('premium voiceovers are dropped from the chip list', async () => {
-  const { doc } = load(seriesPage());
-  await settle(200);
-
-  const labels = chipLabels(doc, 'translators');
-  assert.equal(labels.some((l) => /PRO/.test(l)), false, 'PRO voiceover should not be listed');
-  assert.equal(labels.length, 2);
-});
-
-test('picking a lower quality changes both the link and the filename', async () => {
-  const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  pick(doc, 'qualities', '360p').click();
-  dl(doc).click();
-
-  assert.deepEqual(effects.anchorClicks.at(-1), {
-    href: 'https://cdn.example.net/a_360.mp4',
-    download: 'The.Example.Show.2021.S02E05.360p.mp4',
-  });
-});
-
-test('a chosen quality is kept when switching voiceover', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { tid: '56', url: streamList.plain });
-
-  pick(doc, 'qualities', '720p').click();
-  pick(doc, 'translators', 'Українська').click();
-  deliverStreams(window, { tid: '57', url: streamList.plain });
-
-  assert.match(dl(doc).textContent, /720p/, 'preference should carry across tracks');
-});
-
 test('a film page with no translator tabs still renders and works', async () => {
   const { doc, window, effects } = load(moviePage(), {
     url: 'https://hdrezka.me/films/another-example.html',
@@ -178,6 +187,8 @@ test('a film page with no translator tabs still renders and works', async () => 
   dl(doc).click();
   assert.equal(effects.anchorClicks.at(-1).download, 'Another.Example.1999.1080p.mp4');
 });
+
+// ---------------------------------------------------------------- loading ----
 
 test('the script fetches on its own when the site never fires the AJAX call', async () => {
   const { effects } = load(seriesPage());
@@ -222,22 +233,117 @@ test('switching episode drops the previous episode\'s link', async () => {
   doc.querySelector('.b-simple_episode__item[data-episode_id="1"]').click();
 
   assert.equal(dl(doc).disabled, true, 'must not offer the old episode file');
-  assert.equal(chips(doc, 'qualities').length, 0);
+  assert.equal(value(doc, 'quality'), '—');
+  assert.equal(opts(doc, 'qualities').length, 0);
 });
+
+// --------------------------------------------------------------- chrome ----
 
 test('the panel opens and closes, and remembers being open', async () => {
   const { doc, window } = load(seriesPage());
   await settle(200);
 
-  const panel = shadow(doc).querySelector('.panel');
   const pill = el(doc, 'pill');
-  assert.equal(panel.hidden, true, 'starts closed');
+  assert.equal(card(doc).hidden, true, 'starts closed');
 
   pill.click();
-  assert.equal(panel.hidden, false);
+  assert.equal(card(doc).hidden, false);
   assert.equal(pill.getAttribute('aria-expanded'), 'true');
   assert.equal(window.localStorage.getItem('rzk.open'), 'true', 'state persisted');
 
   pill.click();
-  assert.equal(panel.hidden, true);
+  assert.equal(card(doc).hidden, true);
+});
+
+test('the status line is absent when there is nothing to report', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  assert.equal(el(doc, 'status').hidden, true, 'no empty status row taking up space');
+});
+
+test('menus stay shut until their field is clicked', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  const field = el(doc, 'qualityField');
+  assert.equal(el(doc, 'qualities').hidden, true);
+
+  field.click();
+  assert.equal(el(doc, 'qualities').hidden, false);
+  assert.equal(field.getAttribute('aria-expanded'), 'true');
+
+  field.click();
+  assert.equal(el(doc, 'qualities').hidden, true);
+});
+
+test('opening one menu closes the other', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  el(doc, 'qualityField').click();
+  el(doc, 'voiceField').click();
+
+  assert.equal(el(doc, 'qualities').hidden, true, 'quality menu should have closed');
+  assert.equal(el(doc, 'translators').hidden, false);
+});
+
+test('choosing an option closes the menu', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  el(doc, 'qualityField').click();
+  option(doc, 'qualities', '360p').click();
+
+  assert.equal(el(doc, 'qualities').hidden, true);
+  assert.equal(value(doc, 'quality'), '360p');
+});
+
+test('Escape closes the menu first, then the panel', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  deliverStreams(window, { url: streamList.plain });
+
+  el(doc, 'pill').click();
+  el(doc, 'qualityField').click();
+
+  const esc = () =>
+    shadow(doc).querySelector('.root').dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+
+  esc();
+  assert.equal(el(doc, 'qualities').hidden, true, 'first Escape closes the menu');
+  assert.equal(card(doc).hidden, false, 'panel stays open');
+
+  esc();
+  assert.equal(card(doc).hidden, true, 'second Escape closes the panel');
+});
+
+test('a field with nothing to choose between is not clickable', async () => {
+  const { doc, window } = load(
+    seriesPage({ translators: [{ id: '56', name: 'Дубляж', active: true }] })
+  );
+  await settle(200);
+  deliverStreams(window, { url: '[720p]https://cdn.example.net/only_720.mp4' });
+
+  assert.equal(el(doc, 'voiceField').disabled, true, 'one voiceover — nothing to pick');
+  assert.equal(el(doc, 'qualityField').disabled, true, 'one quality — nothing to pick');
+  assert.equal(dl(doc).disabled, false, 'still downloadable');
+});
+
+test('the trigger flags a ready file while the panel is closed', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle(200);
+  assert.equal(el(doc, 'badge').hidden, true, 'nothing to flag yet');
+
+  deliverStreams(window, { url: streamList.plain });
+  assert.equal(el(doc, 'badge').hidden, false, 'a file is ready');
+
+  el(doc, 'pill').click();
+  assert.equal(el(doc, 'badge').hidden, true, 'redundant once the panel is open');
 });

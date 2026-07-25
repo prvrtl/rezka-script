@@ -13,15 +13,30 @@ Updates come from this repo, so the extension will pick up new versions on its o
 
 ## Usage
 
-Open any movie or episode page. A "Rezka DL" pill appears in the bottom-right corner; click it to expand the panel.
+Open any movie or episode page. A round button sits in the bottom-right corner, with a blue
+dot on it once a file is ready to pull. Click it for the panel:
 
-Press `Esc` to close it.
+```
+┌──────────────────────────────┐
+│  Quality              1080p ⌄│
+│  Voice          🇺🇦 Українська ⌄│
+│  ────────────────────────────│
+│  [  ↓  Download            ] │
+│      Copy link  ·  Leech     │
+└──────────────────────────────┘
+```
 
-- **Voiceover chips** — switch translation. Selecting one clicks the site's own tab, so the player follows along and the stream list refreshes.
-- **Quality chips** — every free quality, best first. The top one is preselected; pick a smaller file if you'd rather. Your choice is remembered and reused on later releases that offer it.
-- **Download** — saves the file with a sensible name: `Title.Year.S01E02.1080p.mp4`, built from the original-language title and the active season/episode tabs.
-- **Leech** — rewrites the URL to a `secureleech://` handler and copies the filename to your clipboard, since Leech doesn't accept a name over the URL scheme.
-- **Copy** — puts the raw stream URL on the clipboard.
+That's the whole interface. The two rows open a menu only when there's more than one thing
+to choose between, otherwise they sit inert — no lists of chips to read past, no title
+repeated back at you, and no status line unless something actually needs saying.
+
+- **Quality** — every free quality, best first. Your pick is remembered and reused on later releases that offer it.
+- **Voice** — switching clicks the site's own tab, so the player follows along and the stream list refreshes.
+- **Download** — saves as `Title.Year.S01E02.1080p.mp4`, built from the original-language title and the active season/episode tabs.
+- **Copy link** — puts the raw stream URL on the clipboard.
+- **Leech** — rewrites the URL to a `secureleech://` handler and copies the filename, since Leech can't take a name over the URL scheme.
+
+`Esc` closes an open menu, then the panel.
 
 On load the script prefers a Ukrainian voiceover when one exists, and moves off a PRO-only track to a free one if the page defaults to premium.
 

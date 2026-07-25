@@ -97,7 +97,14 @@ export const shadow = (doc) => doc.getElementById('rzk-root')?.shadowRoot ?? nul
 
 export const el = (doc, name) => shadow(doc)?.querySelector(`[data-el="${name}"]`) ?? null;
 
-export const chips = (doc, name) =>
-  [...(shadow(doc)?.querySelectorAll(`[data-el="${name}"] .chip`) ?? [])];
+/** Options inside one of the two dropdown menus ("qualities" | "translators"). */
+export const opts = (doc, menu) =>
+  [...(shadow(doc)?.querySelectorAll(`[data-el="${menu}"] .opt`) ?? [])];
 
-export const chipLabels = (doc, name) => chips(doc, name).map((c) => c.textContent.trim());
+export const optLabels = (doc, menu) => opts(doc, menu).map((o) => o.textContent.trim());
+
+export const chosen = (doc, menu) =>
+  opts(doc, menu).find((o) => o.getAttribute('aria-selected') === 'true') ?? null;
+
+/** The value shown on a closed field row. */
+export const value = (doc, field) => el(doc, `${field}Value`)?.textContent.trim() ?? null;
