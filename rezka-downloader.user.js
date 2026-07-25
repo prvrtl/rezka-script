@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.3
+// @version        3.4
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -980,10 +980,21 @@
     .bar { position: sticky; top: 0; z-index: 40; background: rgba(11,11,14,.86);
            -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
            border-bottom: 1px solid var(--line); }
-    .bar .wrap { display: flex; align-items: center; gap: 14px; height: 56px; }
-    .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -.01em;
-             cursor: pointer; background: none; border: 0; flex: none; }
-    .brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .bar .wrap { display: flex; align-items: center; gap: 14px; height: 60px; }
+    .nav { display: flex; align-items: center; gap: 2px; flex: none; }
+    .nav a { padding: 7px 11px; border-radius: 8px; color: var(--dim); text-decoration: none;
+             font-size: 13px; white-space: nowrap; transition: color .12s ease, background .12s ease; }
+    .nav a:hover { color: var(--ink); background: rgba(255,255,255,.05); }
+    .nav a[aria-current="page"] { color: var(--ink); background: rgba(255,255,255,.09); }
+    @media (max-width: 1000px) { .nav a.wide { display: none; } }
+    @media (max-width: 760px) { .nav { display: none; } }
+    .brand { display: flex; align-items: center; gap: 9px; cursor: pointer;
+             background: none; border: 0; padding: 0; flex: none; }
+    .brand .mark { width: 27px; height: 27px; border-radius: 8px; display: block; flex: none;
+                   box-shadow: 0 2px 8px rgba(10,132,255,.35); transition: transform .14s ease; }
+    .brand:hover .mark { transform: translateY(-1px); }
+    .brand .word { font-size: 15.5px; font-weight: 680; letter-spacing: -.025em; color: var(--ink); }
+    .brand:hover .word { color: #fff; }
     .search { flex: 1; max-width: 420px; display: flex; align-items: center; gap: 8px;
               padding: 7px 12px; border-radius: 9px; background: var(--surface);
               border: 1px solid var(--line); }
@@ -1009,9 +1020,15 @@
     .screen { position: relative; aspect-ratio: 16/9; width: 100%; background: #000;
               border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
     .screen video { width: 100%; height: 100%; display: block; background: #000; }
-    .screen .veil { position: absolute; inset: 0; display: grid; place-items: center; gap: 10px;
+    /* align-content matters as much as align-items here: without it the two
+       implicit rows stretch to fill the veil and each child centres inside its
+       own track rather than in the frame. An empty message must not hold a row
+       open either, or the button sits half a gap high. */
+    .screen .veil { position: absolute; inset: 0; display: grid; place-items: center;
+                    align-content: center; gap: 10px;
                     background: #000; text-align: center; padding: 24px; }
     .screen .veil[hidden] { display: none; }
+    .screen .veil .msg:empty { display: none; }
     .screen .veil .msg { color: var(--dim); font-size: 13px; max-width: 46ch; }
     .poster-blur { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
                    filter: blur(28px) brightness(.35); transform: scale(1.1); }
@@ -1104,10 +1121,11 @@
                     color: var(--ink); border: 1px solid var(--line); font-size: 13px; cursor: pointer; }
     .batch .hint { font-size: 12.5px; color: var(--dim); padding-top: 8px; }
     .batch .hint.warn { color: var(--bad); }
-    .bar { position: relative; height: 4px; border-radius: 4px; background: rgba(255,255,255,.1);
-           margin: 10px 0 8px; overflow: hidden; }
-    .bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px;
-             transition: width .2s ease; }
+    /* Named for what it is: ".bar" collided with the page header. */
+    .batch .progress { position: relative; height: 4px; border-radius: 4px;
+                       background: rgba(255,255,255,.1); margin: 10px 0 8px; overflow: hidden; }
+    .batch .progress i { position: absolute; inset: 0 auto 0 0; background: var(--accent);
+                         border-radius: 4px; transition: width .2s ease; }
     .batch .now { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
     .batch .now b { font-weight: 600; font-variant-numeric: tabular-nums; }
     .batch .now span { color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -1177,6 +1195,14 @@
     full: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg>',
     vol: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/></svg>',
     mute: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l4 6M21 9l-4 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
+    logo: `<svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <defs><linearGradient id="rzk-g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#4aa8ff"/><stop offset="1" stop-color="#0a5cff"/>
+      </linearGradient></defs>
+      <rect width="32" height="32" rx="9" fill="url(#rzk-g)"/>
+      <text x="16" y="23" text-anchor="middle" fill="#fff" font-size="20" font-weight="700"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">R</text>
+    </svg>`,
     search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
   };
 
@@ -1211,6 +1237,7 @@
 
       // Only hide the original once ours is actually standing.
       document.documentElement.setAttribute('data-rzk', 'on');
+      holdBody();
     },
 
     cache() {
@@ -1218,11 +1245,33 @@
       for (const el of ui.root.querySelectorAll('[data-el]')) ui.el[el.dataset.el] = el;
     },
 
+    // Two catalogues and the site's own two "best" listings — the whole of it.
+    NAV: [
+      { label: 'Films', path: '/films/' },
+      { label: 'Series', path: '/series/' },
+      { label: 'Top films', path: '/films/best/', wide: true },
+      { label: 'Top shows', path: '/series/best/', wide: true }
+    ],
+
+    nav() {
+      let here = '';
+      try { here = location.pathname || ''; } catch (e) {}
+      // Longest match wins, so /films/best/ is "Top films" and not "Films".
+      const active = [...ui.NAV].sort((a, b) => b.path.length - a.path.length)
+        .find(n => here.startsWith(n.path))?.path;
+      return ui.NAV.map(n =>
+        `<a href="${n.path}"${n.wide ? ' class="wide"' : ''}${
+          n.path === active ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`).join('');
+    },
+
     bar() {
       return `
       <header class="bar">
         <div class="wrap">
-          <button class="brand" data-el="brand" type="button"><span class="dot"></span> Rezka</button>
+          <button class="brand" data-el="brand" type="button" aria-label="Rezka — home">
+            ${I.logo}<span class="word">Rezka</span>
+          </button>
+          <nav class="nav" data-el="nav">${ui.nav()}</nav>
           <label class="search">${I.search}
             <input data-el="q" type="search" placeholder="Search films and shows" aria-label="Search">
           </label>
@@ -1236,6 +1285,7 @@
       ui.el.brand?.addEventListener('click', () => { location.href = '/'; });
       ui.el.restore?.addEventListener('click', () => {
         document.documentElement.removeAttribute('data-rzk');
+        releaseBody();
         ui.host.remove();
       });
       ui.el.q?.addEventListener('keydown', e => {
@@ -1432,6 +1482,7 @@
       const original = document.getElementById('player');
       if (original) {
         document.documentElement.removeAttribute('data-rzk');
+        releaseBody();
         original.scrollIntoView?.({ block: 'center' });
       }
     },
@@ -1683,7 +1734,7 @@
           <b>${item ? tag(item) : '—'}</b>
           <span data-el="bPct">${pct === null ? (paused ? 'stopped' : 'preparing…') : pct + '%'}</span>
         </div>
-        <div class="bar"><i data-el="bBar" style="width:${pct || 0}%"></i></div>
+        <div class="progress"><i data-el="bBar" style="width:${pct || 0}%"></i></div>
         <div class="tally">
           <span>${c.done} / ${c.total}</span>
           ${c.failed ? `<span class="bad">${c.failed} failed</span>` : ''}
@@ -1952,6 +2003,29 @@
     });
   }
 
+  // The site ships `body.active-brand.pp { padding-top: 250px !important }`,
+  // which outranks any selector a stylesheet of ours could use — higher
+  // specificity and important both. An inline declaration with priority is the
+  // one thing that beats an author !important rule, so the body box is held
+  // directly and handed back untouched when the UI steps aside.
+  let heldBodyStyle;                       // undefined while we are not holding it
+
+  function holdBody() {
+    const b = document.body;
+    if (!b || heldBodyStyle !== undefined) return;
+    heldBodyStyle = b.getAttribute('style');
+    b.style.setProperty('padding', '0', 'important');
+    b.style.setProperty('margin', '0', 'important');
+  }
+
+  function releaseBody() {
+    const b = document.body;
+    if (!b || heldBodyStyle === undefined) return;
+    if (heldBodyStyle === null) b.removeAttribute('style');
+    else b.setAttribute('style', heldBodyStyle);
+    heldBodyStyle = undefined;
+  }
+
   // One global rule, and it only bites once our own UI is up.
   //
   // At document-start the document can still be completely empty — no head and
@@ -1965,7 +2039,12 @@
     style.id = 'rzk-takeover';
     style.textContent = `html[data-rzk="on"] body > *:not(#rzk-app) { display: none !important; }
                          html[data-rzk="on"] { background: #0b0b0e; }
-                         html[data-rzk="on"] body { overflow: auto !important; }`;
+                         html[data-rzk="on"] body {
+                           overflow: auto !important;
+                           padding: 0 !important;
+                           margin: 0 !important;
+                           background: #0b0b0e !important;
+                         }`;
     parent.appendChild(style);
     return true;
   }
@@ -1988,6 +2067,7 @@
       } catch (e) {
         // Give the real site back rather than stranding the reader.
         document.documentElement.removeAttribute('data-rzk');
+        releaseBody();
         document.getElementById('rzk-app')?.remove();
         throw e;
       }

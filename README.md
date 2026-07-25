@@ -21,6 +21,11 @@ runtime) above a real video element playing the direct file — no Premium banne
 chrome you didn't ask for. Under it: voice, season and quality pickers, an episode grid,
 and Download / Ссылка / Leech. Synopsis and the info table sit below.
 
+**Navigation.** The header carries the logo, four links — Films, Series, Top films,
+Top shows — and the search box. The top lists are the site's own `/films/best/` and
+`/series/best/`, not an invented sort parameter. The current section is marked, with the
+longest match winning so `/films/best/` reads as *Top films* rather than *Films*.
+
 **Catalog and search.** The same card everywhere: cover, kind badge, title, and the
 `1996, США, Фантастика` line. Covers load lazily, pagination is carried through, and the
 search box in the header submits to the site's own search.
@@ -28,9 +33,12 @@ search box in the header submits to the site's own search.
 Anything else — a profile page, a collection, the forum — is left completely alone. The
 takeover only fires on pages it can actually render, and never blanks a page it can't.
 
-**Escape hatch:** *Оригинальный сайт* in the header removes the new UI and restores theirs.
+**Escape hatch:** *Original site* in the header removes the new UI and restores theirs.
 The original DOM is only ever hidden, never deleted, so the site's own scripts keep running
-underneath and nothing is lost.
+underneath and nothing is lost. The `<body>` box is a special case: the site ships
+`body.active-brand.pp { padding-top: 250px !important }`, which no stylesheet selector of
+ours can outrank, so the padding and margin are held with an inline `!important`
+declaration and handed back verbatim when the UI steps aside.
 
 ## Language
 

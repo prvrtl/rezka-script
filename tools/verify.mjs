@@ -167,6 +167,27 @@ for (const [name, url] of targets) {
   }
   check(r.takenOver, 'original page hidden');
 
+  // The site's own body padding used to leave a tall empty band above the app.
+  const chrome = await page.evaluate(() => {
+    const host = document.getElementById('rzk-app');
+    const s = host.shadowRoot;
+    const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, h: r.height }; };
+    const bar = s.querySelector('.bar');
+    return {
+      appTop: box(host).top + window.scrollY,
+      barH: bar ? box(bar).h : 0,
+      hasLogo: Boolean(s.querySelector('.brand .mark')),
+      word: s.querySelector('.brand .word')?.textContent.trim() || '',
+      nav: [...s.querySelectorAll('.nav a')].map(a => a.textContent.trim()),
+      current: [...s.querySelectorAll('.nav a[aria-current="page"]')].map(a => a.textContent.trim()),
+      bodyPad: getComputedStyle(document.body).paddingTop,
+    };
+  });
+  check(chrome.appTop <= 1, 'no empty band above the app', `app starts at ${chrome.appTop.toFixed(0)}px, body pad ${chrome.bodyPad}`);
+  check(chrome.barH >= 50 && chrome.barH <= 70, 'header is its proper height', `${chrome.barH.toFixed(0)}px`);
+  check(chrome.hasLogo && chrome.word === 'Rezka', 'logo rendered', chrome.word);
+  check(chrome.nav.length === 4, 'navigation present', chrome.nav.join(' / '));
+
   if (name === 'catalog' || name === 'search') {
     check(r.cards > 0, 'cards rendered', String(r.cards));
     if (!r.cards) {
@@ -209,6 +230,27 @@ for (const [name, url] of targets) {
       check(/\d+\s+episodes?\b/.test(r.batchHint), 'queue size computed', r.batchHint.slice(0, 52));
     }
     if (r.note) console.log(`      note: ${r.note}`);
+
+    // Geometry needs a real layout engine, so this lives here rather than in
+    // the jsdom suite.
+    const geo = await page.evaluate(() => {
+      const s = document.getElementById('rzk-app').shadowRoot;
+      const mid = (sel) => {
+        const e = s.querySelector(sel);
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      };
+      return { screen: mid('.screen'), button: mid('[data-el="bigplay"]'), glyph: mid('[data-el="bigplay"] svg') };
+    });
+    if (geo.screen && geo.button) {
+      const dy = +(geo.button.cy - geo.screen.cy).toFixed(1);
+      const dx = +(geo.button.cx - geo.screen.cx).toFixed(1);
+      check(Math.abs(dy) <= 2, 'play button centred vertically', `${dy > 0 ? '+' : ''}${dy}px`);
+      check(Math.abs(dx) <= 2, 'play button centred horizontally', `${dx > 0 ? '+' : ''}${dx}px`);
+      const gy = +(geo.glyph.cy - geo.button.cy).toFixed(1);
+      check(Math.abs(gy) <= 1, 'play glyph centred in its button', `${gy}px`);
+    }
 
     // On-device translation: give it a real user gesture, then report honestly
     // whether the model actually engaged. It may still be downloading.

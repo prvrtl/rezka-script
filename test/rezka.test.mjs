@@ -956,3 +956,86 @@ test('nothing is sent anywhere to translate', async () => {
   assert.equal(offsite.length, 0, 'translation is on-device only');
   assert.equal(effects.headRequests.length, 0);
 });
+
+// -------------------------------------------------------------- navigation ----
+
+test('the header carries a logo and the catalogue links', async () => {
+  const { doc } = load(gridPage(), { url: CATALOG_URL });
+  await settle();
+
+  assert.ok(shadow(doc).querySelector('.brand .mark'), 'logo mark rendered');
+  assert.equal(text(doc, '.brand .word'), 'Rezka');
+
+  assert.deepEqual(
+    all(doc, '.nav a').map((a) => [a.textContent.trim(), a.getAttribute('href')]),
+    [
+      ['Films', '/films/'],
+      ['Series', '/series/'],
+      ['Top films', '/films/best/'],
+      ['Top shows', '/series/best/'],
+    ]
+  );
+});
+
+test('the current section is marked, longest match winning', async () => {
+  const top = load(gridPage(), { url: 'https://rezka-ua.tv/films/best/' });
+  await settle();
+  assert.equal(
+    all(top.doc, '.nav a[aria-current="page"]').map((a) => a.textContent.trim()).join(),
+    'Top films',
+    '/films/best/ is Top films, not Films'
+  );
+
+  const plain = load(gridPage(), { url: 'https://rezka-ua.tv/films/' });
+  await settle();
+  assert.equal(
+    all(plain.doc, '.nav a[aria-current="page"]').map((a) => a.textContent.trim()).join(),
+    'Films'
+  );
+});
+
+test('navigation is present on a watch page too', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  assert.equal(all(doc, '.nav a').length, 4);
+  assert.equal(all(doc, '.nav a[aria-current="page"]').length, 1, 'series section marked');
+});
+
+test('the takeover beats the site\'s own !important body padding', async () => {
+  // The real stylesheet has body.active-brand.pp{padding-top:250px!important},
+  // which no selector of ours can outrank — only an inline declaration can.
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  const body = doc.body;
+  assert.match(body.style.getPropertyValue('padding'), /^0(px)?$/);
+  assert.equal(body.style.getPropertyPriority('padding'), 'important', 'priority is the whole point');
+  assert.equal(body.style.getPropertyPriority('margin'), 'important');
+});
+
+test('stepping aside hands the body back exactly as it was', async () => {
+  const html = seriesPage().replace('<body>', '<body style="padding-top: 250px; color: red">');
+  const { doc } = load(html, { url: SERIES_URL });
+  await settle();
+  assert.equal(doc.body.style.getPropertyPriority('padding'), 'important', 'held while ours is up');
+
+  el(doc, 'restore').click();
+
+  assert.equal(doc.body.getAttribute('style'), 'padding-top: 250px; color: red', 'restored verbatim');
+});
+
+test('the batch progress bar does not reuse the header\'s class', async () => {
+  const { doc, window } = load(seriesPage(), {
+    url: SERIES_URL, gmDownload: true, autoStream: true,
+  });
+  await settle();
+
+  el(doc, 'bStart').click();
+  await settle(60);
+
+  assert.ok(shadow(doc).querySelector('.batch .progress'), 'scoped progress bar');
+  assert.equal(shadow(doc).querySelectorAll('.batch .bar').length, 0, 'no collision with .bar');
+  const header = shadow(doc).querySelector('.bar');
+  assert.ok(header && header.classList.contains('bar'), 'header keeps .bar to itself');
+});
