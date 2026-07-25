@@ -63,13 +63,13 @@ test('the header carries title, original title and the facts line', async () => 
   const { doc } = load(seriesPage());
   await settle();
 
-  assert.equal(text(doc, '.head h1'), 'Класний керівник');
-  assert.equal(text(doc, '.head .orig'), 'Great Teacher');
+  assert.equal(text(doc, '.head h1'), 'Great Teacher', 'English name leads');
+  assert.equal(text(doc, '.head .orig'), 'Класний керівник', 'local name underneath');
 
   const facts = text(doc, '.facts');
   assert.match(facts, /1998/, 'year');
-  assert.match(facts, /Япония/, 'country');
-  assert.match(facts, /45 мин\./, 'runtime');
+  assert.match(facts, /Japan/, 'country');
+  assert.match(facts, /45 min/, 'runtime');
   assert.match(facts, /9\.60/, 'rating score');
 });
 
@@ -77,7 +77,7 @@ test('a film with no episodes renders without season or episode controls', async
   const { doc } = load(filmPage());
   await settle();
 
-  assert.equal(text(doc, '.head h1'), 'Тихий Дом');
+  assert.equal(text(doc, '.head h1'), 'The Quiet House');
   assert.equal(el(doc, 'seasonPick'), null, 'no season picker on a film');
   assert.equal(all(doc, '.ep').length, 0, 'no episode grid on a film');
 });
@@ -88,8 +88,8 @@ test('synopsis and info table are carried over', async () => {
 
   assert.match(text(doc, '.synopsis'), /Краткое описание сериала/);
   const meta = text(doc, '.meta dl');
-  assert.match(meta, /Страна/);
-  assert.match(meta, /Япония/);
+  assert.match(meta, /Country/);
+  assert.match(meta, /Japan/);
 });
 
 // --------------------------------------------------------- watch: voices ----
@@ -98,7 +98,7 @@ test('a Ukrainian voiceover is auto-selected and PRO ones are dropped', async ()
   const { doc } = load(seriesPage());
   await settle();
 
-  assert.match(value(doc, 'voice'), /Українська/);
+  assert.match(value(doc, 'voice'), /Ukrainian/);
   const labels = optionLabels(doc, 'voice');
   assert.equal(labels.length, 2, 'PRO track excluded');
   assert.equal(labels.some((l) => /PRO/.test(l)), false);
@@ -141,7 +141,7 @@ test('a PRO-only release says so instead of offering a dead link', async () => {
   deliver(window, { url: streamList.proOnly });
 
   assert.equal(value(doc, 'quality'), '—');
-  assert.match(el(doc, 'note').textContent, /только для PRO/i);
+  assert.match(el(doc, 'note').textContent, /PRO-only/i);
   assert.equal(el(doc, 'download').disabled, true);
 });
 
@@ -230,7 +230,7 @@ test('switching season moves to that season\'s first episode', async () => {
   pick(doc, 'season', '1').click();
   await settle();
 
-  assert.equal(value(doc, 'season'), '1 сезон');
+  assert.equal(value(doc, 'season'), 'Season 1');
   assert.deepEqual(all(doc, '.ep').map((e) => e.textContent.trim()), ['1', '2', '3']);
   assert.match(effects.xhrs.at(-1).body, /season=1&episode=1/);
 });
@@ -299,7 +299,7 @@ test('an unreadable response is reported, not swallowed', async () => {
   effects.xhrs.at(-1).respond('<html>bot check</html>');
   await settle(0);
 
-  assert.match(el(doc, 'note').textContent, /не читается/i);
+  assert.match(el(doc, 'note').textContent, /Unreadable/i);
   assert.ok(el(doc, 'note').classList.contains('error'));
 });
 
@@ -324,8 +324,8 @@ test('catalog cards are rebuilt with cover, title and meta', async () => {
 
   const first = cards[0];
   assert.equal(first.querySelector('.name').textContent.trim(), 'Поколение Икс');
-  assert.equal(first.querySelector('.sub').textContent.trim(), '1996, США, Фантастика');
-  assert.equal(first.querySelector('.kind').textContent.trim(), 'Фильм');
+  assert.equal(first.querySelector('.sub').textContent.trim(), '1996, USA, Sci-Fi', 'meta line translated');
+  assert.equal(first.querySelector('.kind').textContent.trim(), 'Film');
   assert.match(first.querySelector('img').getAttribute('src'), /91370\.jpg/);
   assert.match(first.getAttribute('href'), /91370-pokolenie-iks/);
 });
@@ -350,7 +350,7 @@ test('a search with no results says so instead of showing a bare page', async ()
   await settle();
 
   assert.ok(shadow(doc), 'a search URL is still ours to render');
-  assert.match(text(doc, '.empty'), /Ничего не найдено/);
+  assert.match(text(doc, '.empty'), /Nothing found/);
 });
 
 test('an ordinary page with no cards is left alone', async () => {
@@ -391,11 +391,11 @@ test('a full restyle does not stop the watch page rendering', async () => {
   await settle();
 
   assert.ok(shadow(doc), 'still mounts');
-  assert.equal(text(doc, '.head h1'), 'Класний керівник', 'title from itemprop/og');
-  assert.equal(text(doc, '.head .orig'), 'Great Teacher', 'original from alternativeHeadline');
+  assert.equal(text(doc, '.head h1'), 'Great Teacher', 'English name from alternativeHeadline');
+  assert.equal(text(doc, '.head .orig'), 'Класний керівник', 'local name from itemprop=name');
   assert.match(text(doc, '.facts'), /1998/, 'year from og:title');
-  assert.match(text(doc, '.facts'), /Комедии/, 'genre from itemprop');
-  assert.match(text(doc, '.facts'), /45 мин\./, 'runtime from og:duration');
+  assert.match(text(doc, '.facts'), /Comedy/, 'genre from itemprop');
+  assert.match(text(doc, '.facts'), /45 min/, 'runtime from og:duration');
   assert.match(text(doc, '.facts'), /9\.60/, 'rating from itemprop=average');
   assert.match(text(doc, '.synopsis'), /Краткое описание/, 'synopsis from og:description');
 });
@@ -404,9 +404,9 @@ test('a full restyle does not stop voices, seasons or episodes working', async (
   const { doc, effects } = load(seriesPage({ classes: SCRAMBLED }), { url: SERIES_URL });
   await settle();
 
-  assert.match(value(doc, 'voice'), /Українська/, 'voices from data-translator_id');
+  assert.match(value(doc, 'voice'), /Ukrainian/, 'voices from data-translator_id');
   assert.equal(optionLabels(doc, 'voice').length, 2, 'PRO still filtered out');
-  assert.equal(value(doc, 'season'), '2 сезон', 'seasons from data-tab_id');
+  assert.equal(value(doc, 'season'), 'Season 2', 'seasons from data-tab_id');
   assert.equal(all(doc, '.ep').length, 2, 'episodes from data-episode_id');
   assert.match(effects.xhrs.at(-1).body, /translator_id=57&action=get_stream&season=2&episode=1/);
 });
@@ -418,7 +418,7 @@ test('a full restyle does not stop the catalog rendering', async () => {
   const cards = all(doc, '.card');
   assert.equal(cards.length, 3, 'cards found by data-url/data-id');
   assert.equal(cards[0].querySelector('.name').textContent.trim(), 'Поколение Икс');
-  assert.equal(cards[0].querySelector('.sub').textContent.trim(), '1996, США, Фантастика');
+  assert.equal(cards[0].querySelector('.sub').textContent.trim(), '1996, USA, Sci-Fi');
   assert.match(cards[0].getAttribute('href'), /91370-pokolenie-iks/);
   assert.equal(all(doc, '.pager a').length, 3, 'pagination from /page/ hrefs');
 });
@@ -484,7 +484,7 @@ test('one sample is not enough to claim a rate', async () => {
   feed(doc, window, [[0, 3]]);
 
   assert.equal(el(doc, 'speed').hidden, false);
-  assert.match(speedText(doc), /измеряется/);
+  assert.match(speedText(doc), /measuring/);
   assert.equal(speedLevel(doc), 'idle');
 });
 
@@ -497,8 +497,8 @@ test('downloading faster than playback reports headroom', async () => {
   // 12s of video arrived over 4s of wall clock.
   feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
 
-  assert.match(speedText(doc), /запас 3\.0×/);
-  assert.match(speedText(doc), /буфер 18 с/);
+  assert.match(speedText(doc), /3\.0× headroom/);
+  assert.match(speedText(doc), /18s buffered/);
   assert.equal(speedLevel(doc), 'good');
 });
 
@@ -511,7 +511,7 @@ test('downloading slower than playback warns about stalling', async () => {
   // Only 2s of video in 4s of wall clock, and the playhead has eaten the buffer.
   feed(doc, window, [[0, 10, 4], [4000, 12, 8]]);
 
-  assert.match(speedText(doc), /возможны паузы/);
+  assert.match(speedText(doc), /may stall/);
   assert.equal(speedLevel(doc), 'poor');
 });
 
@@ -525,7 +525,7 @@ test('a CDN pacing at real time is not reported as failing', async () => {
   feed(doc, window, [[0, 44, 4], [4000, 48, 8]]);
 
   assert.equal(speedLevel(doc), 'good', '40s buffered is comfortable at any fill rate');
-  assert.doesNotMatch(speedText(doc), /возможны паузы/);
+  assert.doesNotMatch(speedText(doc), /may stall/);
 });
 
 test('a fully buffered file reports that rather than a rate', async () => {
@@ -536,7 +536,7 @@ test('a fully buffered file reports that rather than a rate', async () => {
 
   feed(doc, window, [[0, 200, 0], [4000, 600, 4]], 600);
 
-  assert.match(speedText(doc), /загружено целиком/);
+  assert.match(speedText(doc), /fully downloaded/);
   assert.equal(speedLevel(doc), 'good');
 });
 
@@ -547,10 +547,10 @@ test('seeking backwards restarts the measurement instead of reporting a drop', a
   el(doc, 'bigplay').click();
 
   feed(doc, window, [[0, 100, 0], [4000, 130, 4]]);
-  assert.match(speedText(doc), /запас/);
+  assert.match(speedText(doc), /headroom/);
 
   feed(doc, window, [[1000, 6, 3]]); // seek rewound the buffer
-  assert.match(speedText(doc), /измеряется/, 'window restarted, not a negative rate');
+  assert.match(speedText(doc), /measuring/, 'window restarted, not a negative rate');
 });
 
 test('with a reachable file size the readout gives absolute figures', async () => {
@@ -562,8 +562,8 @@ test('with a reachable file size the readout gives absolute figures', async () =
 
   feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
 
-  assert.match(speedText(doc), /Мбит\/с/, 'throughput shown');
-  assert.match(speedText(doc), /2\.00 ГБ/, 'file size shown');
+  assert.match(speedText(doc), /Mbps/, 'throughput shown');
+  assert.match(speedText(doc), /2\.00 GB/, 'file size shown');
 });
 
 test('without GM_xmlhttpRequest it still reports headroom', async () => {
@@ -575,8 +575,8 @@ test('without GM_xmlhttpRequest it still reports headroom', async () => {
   feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
 
   assert.equal(effects.headRequests.length, 0, 'no probing without the API');
-  assert.match(speedText(doc), /запас 3\.0×/);
-  assert.doesNotMatch(speedText(doc), /Мбит\/с/, 'no bitrate without a size');
+  assert.match(speedText(doc), /3\.0× headroom/);
+  assert.doesNotMatch(speedText(doc), /Mbps/, 'no bitrate without a size');
 });
 
 test('opening the quality menu annotates each option with its size', async () => {
@@ -588,7 +588,7 @@ test('opening the quality menu annotates each option with its size', async () =>
   await settle(5);
 
   assert.equal(effects.headRequests.length >= 3, true, 'each free quality probed once');
-  assert.equal(optionLabels(doc, 'quality').every((l) => /ГБ/.test(l)), true, l => l);
+  assert.equal(optionLabels(doc, 'quality').every((l) => /GB/.test(l)), true, l => l);
 });
 
 test('sizes are probed once per URL, not on every menu open', async () => {
@@ -692,7 +692,7 @@ test('the queue runs to the end of the show, crossing into the next season', asy
   await settle();
 
   startFrom(doc, '1', '2');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   assert.deepEqual(effects.finished, [
     'Great.Teacher.1998.S01E02.720p.mp4',
@@ -706,7 +706,7 @@ test('the starting point is respected', async () => {
   await settle();
 
   startFrom(doc, '2', '2');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   assert.deepEqual(effects.finished, ['Great.Teacher.1998.S02E02.720p.mp4'], 'only the last one');
 });
@@ -717,7 +717,7 @@ test('each episode gets its own freshly resolved URL', async () => {
   const before = effects.xhrs.length;
 
   startFrom(doc, '2', '1');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   const asked = effects.xhrs.slice(before).map((x) => x.body);
   assert.equal(asked.length, 2, 'one request per episode, none batched up front');
@@ -743,7 +743,7 @@ test('only one download is ever in flight', async () => {
   await settle();
 
   startFrom(doc, '1', '1');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   assert.equal(peak, 1, 'strictly sequential');
 });
@@ -757,7 +757,7 @@ test('a failing episode is retried, recorded, and does not stop the rest', async
   await settle();
 
   startFrom(doc, '1', '2');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   const attempts = effects.downloads.filter((d) => /S02E01/.test(d.name)).length;
   assert.equal(attempts, 2, 'retried once before giving up');
@@ -765,7 +765,7 @@ test('a failing episode is retried, recorded, and does not stop the rest', async
     'Great.Teacher.1998.S01E02.720p.mp4',
     'Great.Teacher.1998.S02E02.720p.mp4',
   ], 'the queue carried on past the failure');
-  assert.match(batchBox(doc).textContent, /1 не удалось/);
+  assert.match(batchBox(doc).textContent, /1 failed/);
 });
 
 test('failed episodes can be retried afterwards', async () => {
@@ -778,12 +778,12 @@ test('failed episodes can be retried afterwards', async () => {
   await settle();
 
   startFrom(doc, '1', '1');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
-  assert.match(batchBox(doc).textContent, /не удалось/);
+  await until(() => /finished/i.test(batchBox(doc).textContent));
+  assert.match(batchBox(doc).textContent, /failed/);
 
   failing = false;
   el(doc, 'bRetry').click();
-  await until(() => /завершено/.test(batchBox(doc).textContent) && !/не удалось/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent) && !/failed/.test(batchBox(doc).textContent));
 
   assert.equal(effects.finished.includes('Great.Teacher.1998.S01E01.720p.mp4'), true);
 });
@@ -796,13 +796,13 @@ test('pausing stops the queue and resuming carries on', async () => {
   await until(() => effects.finished.length >= 1);
   el(doc, 'bPause').click();
 
-  await until(() => /Пауза/.test(batchBox(doc).textContent));
+  await until(() => /Paused/.test(batchBox(doc).textContent));
   const atPause = effects.finished.length;
   await settle(400);
   assert.equal(effects.finished.length, atPause, 'nothing new starts while paused');
 
   el(doc, 'bResume').click();
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
   assert.equal(effects.finished.length, 4, 'all four eventually');
 });
 
@@ -817,7 +817,7 @@ test('stopping clears the queue and the saved progress', async () => {
   const done = effects.finished.length;
   await settle(400);
   assert.equal(effects.finished.length, done, 'no further downloads');
-  assert.match(batchBox(doc).textContent, /Скачать по порядку/, 'back to the start screen');
+  assert.match(batchBox(doc).textContent, /Download in order/, 'back to the start screen');
   assert.equal(window.localStorage.getItem('rzk.batch'), 'null', 'saved run cleared');
 });
 
@@ -839,11 +839,11 @@ test('an interrupted run comes back paused and never restarts by itself', async 
   await settle(300);
 
   assert.equal(effects.downloads.length, 0, 'nothing downloads without a click');
-  assert.match(batchBox(doc).textContent, /Пауза/, 'restored in the paused state');
+  assert.match(batchBox(doc).textContent, /Paused/, 'restored in the paused state');
   assert.match(batchBox(doc).textContent, /1 \/ 3/, 'the finished episode is remembered');
 
   el(doc, 'bResume').click();
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
   assert.deepEqual(effects.finished, [
     'Great.Teacher.1998.S01E02.720p.mp4',
     'Great.Teacher.1998.S02E01.720p.mp4',
@@ -854,7 +854,7 @@ test('without GM_download the queue is refused with a reason', async () => {
   const { doc } = load(SHOW(), { url: SERIES_URL, autoStream: true });
   await settle();
 
-  assert.match(batchBox(doc).textContent, /Недоступно/);
+  assert.match(batchBox(doc).textContent, /Unavailable/);
   assert.match(batchBox(doc).textContent, /GM_download/);
   assert.equal(el(doc, 'bStart'), null, 'no start button to press');
 });
@@ -865,8 +865,94 @@ test('the queue honours the chosen quality', async () => {
 
   pick(doc, 'quality', '360p')?.click();
   startFrom(doc, '2', '2');
-  await until(() => /завершено/.test(batchBox(doc).textContent));
+  await until(() => /finished/i.test(batchBox(doc).textContent));
 
   assert.equal(effects.downloads.at(-1).url, 'https://cdn.example.net/s2e2_lo.mp4');
   assert.match(effects.downloads.at(-1).name, /360p\.mp4$/);
+});
+
+// ---------------------------------------------------------------- english ----
+
+test('the interface itself is in English', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  const chrome = shadow(doc).textContent;
+  assert.equal(/[А-Яа-яЇїІіЄєҐґ]/.test(text(doc, '.bar')), false, 'no Cyrillic in the top bar');
+  assert.match(chrome, /Voice/);
+  assert.match(chrome, /Quality/);
+  assert.match(chrome, /Download/);
+  assert.match(chrome, /Copy link/);
+});
+
+test('the glossary turns the closed vocabulary into English', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  const facts = text(doc, '.facts');
+  assert.match(facts, /Japan/, 'country');
+  assert.match(facts, /Comedy, Drama/, 'genre list, each term mapped');
+
+  const table = text(doc, '.meta dl');
+  assert.match(table, /Country/, 'table heading');
+  assert.match(table, /Genre/);
+});
+
+test('an age rating keeps only the part that means anything', async () => {
+  const { doc } = load(filmPage(), { url: 'https://rezka-ua.tv/films/drama/55330-x-2007.html' });
+  await settle();
+
+  const table = text(doc, '.meta dl');
+  assert.match(table, /Age rating/);
+  assert.doesNotMatch(table, /только для взрослых/, 'the prose after the number is dropped');
+});
+
+test('voiceover names translate their vocabulary and leave studio names alone', async () => {
+  const { doc } = load(seriesPage({
+    translators: [
+      { id: '1', name: 'Многоголосый закадровый', active: true },
+      { id: '2', name: 'Оригинал (+субтитры)' },
+      { id: '3', name: 'Дубляж HDrezka Studio' },
+    ],
+  }), { url: SERIES_URL });
+  await settle();
+
+  const labels = optionLabels(doc, 'voice');
+  const has = (s) => labels.some((l) => l.includes(s));
+  assert.equal(has('Multi-voice VO'), true, labels.join(' | '));
+  assert.equal(has('Original (+subtitles)'), true, 'flag prefix aside, the words translate');
+  assert.equal(has('Dubbed HDrezka Studio'), true, 'the studio name survives');
+  assert.equal(labels.some((l) => /[А-Яа-я]/.test(l)), false, 'no Russian left in the list');
+});
+
+test('seasons and episodes are labelled in English without reading the page text', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  assert.equal(value(doc, 'season'), 'Season 2');
+  assert.deepEqual(optionLabels(doc, 'season'), ['Season 1', 'Season 2']);
+});
+
+test('the synopsis is translated on device when the browser can', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL, translator: true });
+  await settle(80);
+
+  assert.equal(text(doc, '.synopsis'), '[en] Краткое описание сериала.');
+  assert.equal(el(doc, 'synopsis').title, 'Краткое описание сериала.', 'original kept for reference');
+});
+
+test('the synopsis stays as-is when no translator exists', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle(80);
+
+  assert.match(text(doc, '.synopsis'), /Краткое описание сериала/, 'original rather than a gap');
+});
+
+test('nothing is sent anywhere to translate', async () => {
+  const { doc, effects } = load(seriesPage(), { url: SERIES_URL, translator: true });
+  await settle(80);
+
+  const offsite = effects.xhrs.filter((x) => /^https?:/.test(x.url || ''));
+  assert.equal(offsite.length, 0, 'translation is on-device only');
+  assert.equal(effects.headRequests.length, 0);
 });

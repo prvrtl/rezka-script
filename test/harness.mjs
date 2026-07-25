@@ -84,6 +84,8 @@ export function load(html, {
   autoStream = false,
   /** Values seeded into localStorage before the script is evaluated. */
   storage = null,
+  /** true, or (text) => translated — installs a fake on-device Translator. */
+  translator = false,
 } = {}) {
   const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
@@ -145,6 +147,14 @@ export function load(html, {
     window.GM_xmlhttpRequest = (o) => {
       effects.headRequests.push(o.url);
       queueMicrotask(() => o.onload({ responseHeaders: `Content-Length: ${fileSize}\r\n` }));
+    };
+  }
+
+  if (translator) {
+    const render = typeof translator === 'function' ? translator : (t) => `[en] ${t}`;
+    window.Translator = {
+      availability: async () => 'available',
+      create: async () => ({ translate: async (t) => render(t) }),
     };
   }
 

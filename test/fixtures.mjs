@@ -88,6 +88,7 @@ export const filmPage = ({
       ${infoRow('Страна', 'Россия')}
       ${infoRow('Жанр', '<span itemprop="genre">Драмы</span>, <span itemprop="genre">Мелодрамы</span>')}
       ${infoRow('Время', '93 мин.')}
+      ${infoRow('Возраст', '18+ только для взрослых')}
     </table>
     <div class="${c.descr}">Короткое описание вместо настоящего.</div>
     <div id="player"><div id="cdnplayer"></div></div>

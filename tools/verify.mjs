@@ -96,6 +96,12 @@ const probe = () => {
     batchEpisodes: [...(q('[data-el="bEpisode"]')?.options || [])].map(o => o.value),
     batchHint: txt('.batch .hint'),
     batchCanStart: Boolean(q('[data-el="bStart"]')),
+    barText: txt('.bar'),
+    // Only the labels the script owns. Values come from the site and may
+    // legitimately contain proper nouns like "СТС" that must not be translated.
+    uiLabels: [...s.querySelectorAll('.pick .k, .dl, .quiet, .ghost, .batch h2, .batch .hint')]
+      .map(n => n.textContent.trim()).join(' | '),
+    synopsisText: txt('.synopsis').slice(0, 60),
   };
 };
 
@@ -114,9 +120,14 @@ const page = context.pages()[0] || await context.newPage();
 
 // The site pulls in ad and tracker hosts that frequently fail to resolve. That
 // is their problem, not the script's — only real exceptions count.
-const NOISE = /ERR_NAME_NOT_RESOLVED|ERR_BLOCKED|ERR_CONNECTION|Failed to load resource|ERR_INTERNET_DISCONNECTED|net::ERR/i;
+// Third-party ad and tracker failures. The script itself never calls fetch —
+// it uses XHR and GM_xmlhttpRequest — so a fetch failure is never ours.
+const NOISE = /ERR_NAME_NOT_RESOLVED|ERR_BLOCKED|ERR_CONNECTION|Failed to load resource|ERR_INTERNET_DISCONNECTED|net::ERR|blocked by CORS policy|Access-Control-Allow-Origin|Failed to fetch/i;
 const errors = [];
-page.on('pageerror', e => errors.push('exception: ' + String(e.message || e)));
+page.on('pageerror', e => {
+  const m = String(e.message || e);
+  if (!NOISE.test(m)) errors.push('exception: ' + m);
+});
 page.on('console', m => {
   if (m.type() !== 'error') return;
   const t = m.text();
@@ -158,11 +169,25 @@ for (const [name, url] of targets) {
 
   if (name === 'catalog' || name === 'search') {
     check(r.cards > 0, 'cards rendered', String(r.cards));
+    if (!r.cards) {
+      const d = await page.evaluate(() => ({
+        url: location.href,
+        title: document.title.slice(0, 60),
+        rawCards: document.querySelectorAll('[data-url][data-id]').length,
+        legacyCards: document.querySelectorAll('.b-content__inline_item').length,
+        bodyLen: document.body.innerHTML.length,
+      }));
+      console.log('      diagnostics:', JSON.stringify(d));
+    }
     check(Boolean(r.firstCard), 'card has a title', r.firstCard);
     check(Boolean(r.heading), 'heading', r.heading.slice(0, 40));
     if (name === 'catalog') check(r.pager > 0, 'pagination', String(r.pager));
   } else {
     check(Boolean(r.title), 'title', r.title.slice(0, 40));
+    const CYR = /[\u0400-\u04FF]/;
+    check(!CYR.test(r.barText), 'top bar in English', r.barText.slice(0, 40));
+    check(!CYR.test(r.uiLabels), 'controls in English', r.uiLabels.slice(0, 64));
+    check(!CYR.test(r.facts), 'facts translated by glossary', r.facts.slice(0, 60));
     check(Boolean(r.facts), 'facts line', r.facts.slice(0, 60));
     check(r.synopsis > 0, 'synopsis', `${r.synopsis} chars`);
     check(Boolean(r.voice) && r.voice !== '—', 'voice resolved', r.voice.slice(0, 30));
@@ -181,9 +206,25 @@ for (const [name, url] of targets) {
       check(r.batchSeasons.length > 0, 'seasons selectable', r.batchSeasons.join(','));
       check(r.batchEpisodes.length > 0, 'episodes selectable', String(r.batchEpisodes.length));
       check(r.batchCanStart, 'queue can be started');
-      check(/\d+\s+сери/.test(r.batchHint), 'queue size computed', r.batchHint.slice(0, 50));
+      check(/\d+\s+episodes?\b/.test(r.batchHint), 'queue size computed', r.batchHint.slice(0, 52));
     }
     if (r.note) console.log(`      note: ${r.note}`);
+
+    // On-device translation: give it a real user gesture, then report honestly
+    // whether the model actually engaged. It may still be downloading.
+    await page.keyboard.press('Shift');
+    await page.waitForTimeout(10000);
+    const tr = await page.evaluate(async () => {
+      const el = document.getElementById('rzk-app').shadowRoot.querySelector('[data-el="synopsis"]');
+      let avail = 'no API';
+      try {
+        if ('Translator' in self) {
+          avail = await Translator.availability({ sourceLanguage: 'ru', targetLanguage: 'en' });
+        }
+      } catch (e) { avail = 'error'; }
+      return { done: el?.dataset.done === '1', text: (el?.textContent || '').slice(0, 44), avail };
+    });
+    console.log(`      synopsis: ${tr.done ? 'TRANSLATED' : 'original kept'} (model: ${tr.avail}) — ${tr.text}…`);
 
     // Actually play it: metadata, then buffered bytes, then the readout.
     if (r.videoSrc) {

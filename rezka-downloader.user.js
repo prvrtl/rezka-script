@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.2
+// @version        3.3
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -18,6 +18,7 @@
 // @grant          GM_getValue
 // @grant          GM_setValue
 // @grant          GM_xmlhttpRequest
+// @grant          unsafeWindow
 // @connect        *
 // @run-at         document-start
 // @homepageURL    https://github.com/prvrtl/rezka-script
@@ -155,7 +156,7 @@
 
     duration() {
       const secs = parseInt(meta('og:duration'), 10);
-      if (secs > 0) return `${Math.round(secs / 60)} мин.`;
+      if (secs > 0) return `${Math.round(secs / 60)} min`;
       return first(() => microText('duration'), () => site.info()['Время']);
     },
 
@@ -284,9 +285,9 @@
           id: el.dataset.id,
           url: el.dataset.url,
           cover: img?.getAttribute('src') || '',
-          entity: el.querySelector('.entity')?.textContent?.trim() || '',
+          entity: i18n.term(el.querySelector('.entity')?.textContent?.trim() || ''),
           title: named?.textContent.trim() || img?.getAttribute('alt')?.trim() || '',
-          meta: blurb || ''
+          meta: i18n.term(blurb || '')
         };
       }).filter(c => c.title && c.url);
     },
@@ -319,11 +320,11 @@
         xhr.onload = () => {
           let data;
           try { data = JSON.parse(xhr.responseText); }
-          catch (e) { reject(new Error('Ответ не читается')); return; }
-          if (!data.success || !data.url) { reject(new Error(data.message || 'Поток не найден')); return; }
+          catch (e) { reject(new Error('Unreadable response')); return; }
+          if (!data.success || !data.url) { reject(new Error(data.message || 'No stream returned')); return; }
           resolve(api.parse(data.url));
         };
-        xhr.onerror = () => reject(new Error('Запрос не прошёл'));
+        xhr.onerror = () => reject(new Error('Request failed'));
         xhr.send(body.toString());
       });
     },
@@ -375,12 +376,201 @@
     [/french|французск|французьк/, '🇫🇷']
   ];
 
+  function voiceLabel(v) {
+    const flag = flagFor(v.name);
+    return `${flag ? flag + ' ' : ''}${i18n.voice(v.name)}`;
+  }
+
   function flagFor(name) {
     if (/\p{Regional_Indicator}/u.test(name)) return '';
     const n = name.toLowerCase();
     for (const [re, flag] of FLAGS) if (re.test(n)) return flag;
     return '';
   }
+
+  // ---------------------------------------------------------------- i18n ----
+  // Getting this page into English has three tiers, best first:
+  //
+  //   1. the site already knows.  Titles carry an original-language name in
+  //      itemprop=alternativeHeadline — real English, not a guess at it.
+  //   2. a glossary.  Genres, countries, table headings and voiceover types are
+  //      a closed vocabulary that repeats on every page: instant and exact.
+  //   3. on-device translation.  Chrome's Translator API for the free prose
+  //      that is left, which is really just the synopsis.
+  //
+  // Nothing leaves the machine, and every tier falls through to the original
+  // text rather than showing a gap.
+
+  const GLOSSARY = {
+    // genres
+    'драмы': 'Drama', 'драма': 'Drama', 'мелодрамы': 'Romance', 'комедии': 'Comedy',
+    'боевики': 'Action', 'фантастика': 'Sci-Fi', 'ужасы': 'Horror', 'триллеры': 'Thriller',
+    'детективы': 'Mystery', 'приключения': 'Adventure', 'аниме': 'Anime',
+    'документальные': 'Documentary', 'криминал': 'Crime', 'военные': 'War',
+    'вестерны': 'Western', 'исторические': 'History', 'семейные': 'Family',
+    'спорт': 'Sport', 'эротика': 'Erotica', 'фэнтези': 'Fantasy', 'биография': 'Biography',
+    'музыкальные': 'Music', 'мюзиклы': 'Musical', 'короткометражные': 'Short',
+    'мультфильмы': 'Animation', 'русские': 'Russian', 'зарубежные': 'Foreign',
+    'наши': 'Domestic', 'фильм': 'Film', 'сериал': 'Series',
+    'мультфильм': 'Cartoon', 'мультсериал': 'Cartoon series', 'аниме-сериал': 'Anime series', 'реальное тв': 'Reality TV', 'телепередачи': 'TV Shows',
+    // countries
+    'россия': 'Russia', 'сша': 'USA', 'япония': 'Japan', 'украина': 'Ukraine',
+    'великобритания': 'UK', 'франция': 'France', 'германия': 'Germany', 'италия': 'Italy',
+    'испания': 'Spain', 'южная корея': 'South Korea', 'корея южная': 'South Korea',
+    'китай': 'China', 'канада': 'Canada', 'индия': 'India', 'польша': 'Poland',
+    'турция': 'Turkey', 'швеция': 'Sweden', 'австралия': 'Australia', 'бразилия': 'Brazil',
+    'мексика': 'Mexico', 'дания': 'Denmark', 'норвегия': 'Norway', 'ирландия': 'Ireland',
+    'бельгия': 'Belgium', 'нидерланды': 'Netherlands', 'ссср': 'USSR', 'гонконг': 'Hong Kong',
+    'аргентина': 'Argentina', 'новая зеландия': 'New Zealand', 'финляндия': 'Finland',
+    // info-table headings
+    'рейтинги': 'Ratings', 'год': 'Year', 'дата выхода': 'Released', 'страна': 'Country',
+    'режиссер': 'Director', 'режиссёр': 'Director', 'жанр': 'Genre', 'в качестве': 'Quality',
+    'возраст': 'Age rating', 'время': 'Runtime', 'из серии': 'Collections',
+    'в переводе': 'Translation', 'входит в списки': 'Featured in', 'актеры': 'Cast',
+    'актёры': 'Cast', 'слоган': 'Tagline', 'премьера': 'Premiere', 'сборы': 'Box office',
+    // voiceover vocabulary
+    'дубляж': 'Dubbed', 'оригинал': 'Original', 'многоголосый закадровый': 'Multi-voice VO',
+    'двухголосый закадровый': 'Two-voice VO', 'одноголосый закадровый': 'Single-voice VO',
+    'закадровый': 'Voice-over', 'субтитры': 'subtitles', 'авторский': 'Auteur',
+    'профессиональный': 'Professional', 'любительский': 'Amateur', 'украинский': 'Ukrainian',
+    'українська': 'Ukrainian', 'російська': 'Russian', 'русский': 'Russian'
+  };
+
+  const i18n = {
+    cache: new Map(),
+    translator: null,
+    state: 'idle',        // idle | loading | ready | gesture | unavailable
+    pending: null,
+
+    /** Tampermonkey's sandbox can hide page globals; reach past it when it does. */
+    host() {
+      try { if (typeof unsafeWindow !== 'undefined' && unsafeWindow) return unsafeWindow; } catch (e) {}
+      return self;
+    },
+
+    cyrillic(s) { return /[Ѐ-ӿ]/.test(s || ''); },
+
+    /** Tier 2: closed vocabulary, exact and instant. */
+    term(text) {
+      const raw = (text || '').trim();
+      if (!raw || !i18n.cyrillic(raw)) return raw;
+
+      const whole = GLOSSARY[raw.toLowerCase().replace(/:$/, '')];
+      if (whole) return whole;
+
+      // Genre and country fields arrive as comma-separated lists.
+      if (raw.includes(',')) {
+        const parts = raw.split(',').map(p => p.trim()).filter(Boolean);
+        const mapped = parts.map(p => GLOSSARY[p.toLowerCase()] || p);
+        if (mapped.some((m, i) => m !== parts[i])) return mapped.join(', ');
+      }
+
+      // "16+ только для взрослых" carries nothing past the number.
+      const age = raw.match(/^(\d{1,2}\+)/);
+      if (age) return age[1];
+
+      // "93 мин." and "2 сезона" are numbers plus one known word.
+      const mins = raw.match(/^(\d+)\s*мин\.?$/);
+      if (mins) return `${mins[1]} min`;
+
+      return raw;
+    },
+
+    /** Tier 3: on-device model, created lazily and never blocking a render. */
+    ensure() {
+      if (i18n.pending) return i18n.pending;
+      if (i18n.state === 'ready' || i18n.state === 'unavailable') {
+        return Promise.resolve(i18n.translator);
+      }
+      i18n.pending = (async () => {
+        const w = i18n.host();
+        const API = w.Translator;
+        if (!API || typeof API.create !== 'function') { i18n.state = 'unavailable'; return null; }
+        try {
+          if (typeof API.availability === 'function') {
+            const a = await API.availability({ sourceLanguage: 'ru', targetLanguage: 'en' });
+            if (a === 'unavailable') { i18n.state = 'unavailable'; return null; }
+          }
+          i18n.state = 'loading';
+          i18n.translator = await API.create({ sourceLanguage: 'ru', targetLanguage: 'en' });
+          i18n.state = 'ready';
+          return i18n.translator;
+        } catch (e) {
+          // Downloading the model usually needs a user gesture; wait for one.
+          i18n.state = /activation|gesture|NotAllowed/i.test(String(e)) ? 'gesture' : 'unavailable';
+          i18n.pending = null;
+          if (i18n.state === 'gesture') i18n.onGesture();
+          return null;
+        }
+      })();
+      return i18n.pending;
+    },
+
+    onGesture() {
+      if (i18n.armed) return;
+      i18n.armed = true;
+      const go = () => { i18n.state = 'idle'; i18n.ensure().then(() => i18n.replay()); };
+      addEventListener('pointerdown', go, { once: true, capture: true });
+      addEventListener('keydown', go, { once: true, capture: true });
+    },
+
+    waiting: new Map(),   // text -> [apply, …]
+
+    /** Translate in the background; the original stays on screen until it lands. */
+    live(text, apply) {
+      const raw = (text || '').trim();
+      if (!raw || !i18n.cyrillic(raw)) return;
+      const hit = i18n.cache.get(raw);
+      if (hit) { apply(hit); return; }
+
+      if (!i18n.waiting.has(raw)) i18n.waiting.set(raw, []);
+      i18n.waiting.get(raw).push(apply);
+
+      i18n.ensure().then(async tr => {
+        if (!tr) return;
+        try {
+          const out = await tr.translate(raw);
+          if (!out) return;
+          i18n.cache.set(raw, out);
+          for (const fn of i18n.waiting.get(raw) || []) fn(out);
+          i18n.waiting.delete(raw);
+        } catch (e) {}
+      });
+    },
+
+    /**
+     * Voiceover names mix a known vocabulary with studio names that must be
+     * left alone ("Дубляж HDrezka Studio"), so substitute phrases in place
+     * rather than trying to match the whole string.
+     */
+    voice(name) {
+      const whole = i18n.term(name);
+      if (whole !== name) return whole;
+      let out = name;
+      for (const [re, en] of [
+        [/многоголосый\s+закадровый/gi, 'Multi-voice VO'],
+        [/двухголосый\s+закадровый/gi, 'Two-voice VO'],
+        [/одноголосый\s+закадровый/gi, 'Single-voice VO'],
+        [/закадровый/gi, 'Voice-over'],
+        [/дубляж/gi, 'Dubbed'],
+        [/оригинал/gi, 'Original'],
+        [/суб\s*титры|субтитры/gi, 'subtitles'],
+        [/украинский|українськ\w*/gi, 'Ukrainian'],
+        [/русский|російськ\w*/gi, 'Russian'],
+        [/профессиональный/gi, 'Professional'],
+        [/любительский/gi, 'Amateur'],
+        [/авторский/gi, 'Auteur']
+      ]) out = out.replace(re, en);
+      return out;
+    },
+
+    /** After a late model download, retry whatever was queued. */
+    replay() {
+      for (const [raw, fns] of [...i18n.waiting]) {
+        i18n.live(raw, out => { for (const fn of fns) fn(out); });
+      }
+    }
+  };
 
   function filename(quality, season = store.season, episode = store.episode) {
     const base = (site.original() || site.title())
@@ -522,12 +712,12 @@
       const parts = [];
       if (bits) parts.push(fmtRate(bits));
       if (done) {
-        parts.push('загружено целиком');
+        parts.push('fully downloaded');
       } else {
-        if (ahead > 0) parts.push(`буфер ${Math.round(ahead)} с`);
-        if (rate !== null) parts.push(`запас ${rate.toFixed(1)}×`);
-        if (level === 'idle') parts.push('измеряется…');
-        if (level === 'poor') parts.push('возможны паузы');
+        if (ahead > 0) parts.push(`${Math.round(ahead)}s buffered`);
+        if (rate !== null) parts.push(`${rate.toFixed(1)}× headroom`);
+        if (level === 'idle') parts.push('measuring…');
+        if (level === 'poor') parts.push('may stall');
       }
       if (speed.size) parts.push(fmtSize(speed.size));
 
@@ -647,12 +837,12 @@
       try {
         const list = await batch.resolve(item);
         const stream = batch.choose(list);
-        if (!stream) throw new Error('нет бесплатного качества');
+        if (!stream) throw new Error('no free quality');
         await batch.fetchFile(item, stream);
         item.status = 'done';
       } catch (e) {
         item.status = batch.cancelled && !e.__real ? 'skipped' : 'failed';
-        item.error = e.message || 'ошибка';
+        item.error = e.message || 'failed';
       }
 
       batch.cancelled = false;
@@ -671,7 +861,7 @@
     async resolve(item, attempts = 3) {
       let last;
       for (let i = 0; i < attempts; i++) {
-        if (batch.cancelled) throw new Error('пропущено');
+        if (batch.cancelled) throw new Error('skipped');
         try {
           return await api.request({
             id: site.id(),
@@ -698,7 +888,7 @@
     async fetchFile(item, stream, attempts = 2) {
       let last;
       for (let i = 0; i < attempts; i++) {
-        if (batch.cancelled) throw new Error('пропущено');
+        if (batch.cancelled) throw new Error('skipped');
         try { return await batch.once(item, stream); }
         catch (e) { last = e; if (batch.cancelled) throw e; await wait(900); }
       }
@@ -711,7 +901,7 @@
         let settled = false;
         const finish = fn => (arg) => { if (settled) return; settled = true; batch.handle = null; fn(arg); };
         const fail = finish(err => {
-          const e = new Error(err?.error || err?.message || 'загрузка не удалась');
+          const e = new Error(err?.error || err?.message || 'download failed');
           e.__real = true;
           reject(e);
         });
@@ -765,8 +955,8 @@
     }
   };
 
-  const fmtSize = b => !b ? '' : b >= 1e9 ? `${(b / 1e9).toFixed(2)} ГБ` : `${Math.round(b / 1e6)} МБ`;
-  const fmtRate = bps => bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Мбит/с` : `${Math.round(bps / 1e3)} Кбит/с`;
+  const fmtSize = b => !b ? '' : b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`;
+  const fmtRate = bps => bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Mbps` : `${Math.round(bps / 1e3)} kbps`;
 
   // ------------------------------------------------------------------ css ----
 
@@ -1034,10 +1224,10 @@
         <div class="wrap">
           <button class="brand" data-el="brand" type="button"><span class="dot"></span> Rezka</button>
           <label class="search">${I.search}
-            <input data-el="q" type="search" placeholder="Поиск фильмов и сериалов" aria-label="Поиск">
+            <input data-el="q" type="search" placeholder="Search films and shows" aria-label="Search">
           </label>
           <span class="spacer"></span>
-          <button class="ghost" data-el="restore" type="button">Оригинальный сайт</button>
+          <button class="ghost" data-el="restore" type="button">Original site</button>
         </div>
       </header>`;
     },
@@ -1084,7 +1274,7 @@
     },
 
     options(items, isOn) {
-      if (!items.length) return '<div class="opt" aria-disabled="true"><span class="name">Нет вариантов</span></div>';
+      if (!items.length) return '<div class="opt" aria-disabled="true"><span class="name">No options</span></div>';
       return items.map(i => `
         <button class="opt" type="button" role="option" data-value="${esc(i.value)}"
                 aria-selected="${isOn(i)}"><span class="name">${esc(i.label)}</span>${I.tick}</button>`).join('');
@@ -1114,22 +1304,22 @@
         <video data-el="video" preload="metadata" playsinline ${poster ? `poster="${esc(poster)}"` : ''}></video>
         <div class="veil" data-el="veil">
           ${poster ? `<img class="poster-blur" src="${esc(poster)}" alt="">` : ''}
-          <button class="bigplay" data-el="bigplay" type="button" aria-label="Смотреть">${I.bigplay}</button>
+          <button class="bigplay" data-el="bigplay" type="button" aria-label="Play">${I.bigplay}</button>
           <p class="msg" data-el="veilMsg"></p>
         </div>
         <div class="chrome" data-el="chrome">
           <div class="scrub" data-el="scrub" role="slider" tabindex="0"
-               aria-label="Позиция" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+               aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="track"><div class="buf" data-el="buf"></div><div class="fill" data-el="fill"></div>
               <div class="knob" data-el="knob"></div></div>
           </div>
           <div class="ctrls">
-            <button data-el="toggle" type="button" aria-label="Смотреть">${I.play}</button>
+            <button data-el="toggle" type="button" aria-label="Play">${I.play}</button>
             <span class="time" data-el="time">0:00 / 0:00</span>
-            <button data-el="muteBtn" type="button" aria-label="Звук">${I.vol}</button>
+            <button data-el="muteBtn" type="button" aria-label="Volume">${I.vol}</button>
             <div class="vol" data-el="vol"><div class="fill" data-el="volFill"></div></div>
             <span class="gap"></span>
-            <button data-el="fs" type="button" aria-label="Во весь экран">${I.full}</button>
+            <button data-el="fs" type="button" aria-label="Fullscreen">${I.full}</button>
           </div>
         </div>
       </div>`;
@@ -1161,7 +1351,7 @@
       // once the page is idle.
       v.addEventListener('pause', player.remember);
       v.addEventListener('ended', () => actions.nextEpisode());
-      v.addEventListener('error', () => player.fallback('Файл не открылся. Попробуйте другое качество.'));
+      v.addEventListener('error', () => player.fallback('That file would not open — try another quality.'));
 
       const seek = e => {
         const r = ui.el.scrub.getBoundingClientRect();
@@ -1216,7 +1406,7 @@
     load(stream) {
       const v = player.video;
       if (!v || !stream) return;
-      if (stream.hls) { player.fallback('Этот перевод отдаётся только потоком HLS — открыт плеер сайта.'); return; }
+      if (stream.hls) { player.fallback('This track is served as HLS only, so the site\u2019s own player has been restored.'); return; }
       ui.el.veilMsg.textContent = '';
       ui.el.bigplay.hidden = false;
       const at = prefs.get(PREF.pos, {})[actions.posKey()] || 0;
@@ -1261,13 +1451,21 @@
     render() {
       const info = site.info();
       const rating = site.rating();
-      const facts = [site.year(), site.country(), site.genre(), site.duration()].filter(Boolean);
+      const facts = [site.year(), site.country(), site.genre(), site.duration()]
+        .filter(Boolean).map(i18n.term);
+
+      // The site's own original-language title beats anything a model would
+      // produce, so lead with it and keep the local name underneath.
+      const local = site.title();
+      const english = site.original();
+      const heading = english || local;
+      const under = english && english !== local ? local : '';
 
       return `
       <main class="wrap">
         <div class="head">
-          <h1>${esc(site.title())}</h1>
-          ${site.original() ? `<div class="orig">${esc(site.original())}</div>` : ''}
+          <h1>${esc(heading)}</h1>
+          ${under ? `<div class="orig">${esc(under)}</div>` : ''}
           <div class="facts">
             ${rating ? `<span class="score"><span class="star">★</span>${esc(rating.score)}</span>` : ''}
             ${facts.map(f => `<span>${esc(f)}</span>`).join('<span class="sep"></span>')}
@@ -1288,9 +1486,9 @@
         <section class="meta">
           <div>${site.poster() ? `<img class="poster" src="${esc(site.poster())}" alt="">` : ''}</div>
           <div>
-            <p class="synopsis">${esc(site.description())}</p>
+            <p class="synopsis" data-el="synopsis">${esc(site.description())}</p>
             <dl>${Object.entries(info).slice(0, 8)
-              .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+              .map(([k, v]) => `<dt>${esc(i18n.term(k))}</dt><dd>${esc(i18n.term(v))}</dd>`).join('')}</dl>
           </div>
         </section>
       </main>`;
@@ -1305,18 +1503,16 @@
       const free = store.free();
       const picked = store.selected();
 
-      let html = ui.picker('voice', 'Озвучка',
-        voice ? `${flagFor(voice.name) ? flagFor(voice.name) + ' ' : ''}${voice.name}` : '—',
-        voices.length < 2);
+      let html = ui.picker('voice', 'Voice', voice ? voiceLabel(voice) : '—', voices.length < 2);
 
       if (seasons.length) {
-        html += ui.picker('season', 'Сезон',
-          seasons.find(s => s.id === store.season)?.label || '—', seasons.length < 2);
+        html += ui.picker('season', 'Season',
+          store.season ? `Season ${store.season}` : '—', seasons.length < 2);
       }
-      html += ui.picker('quality', 'Качество', picked ? picked.label : '—', free.length < 2);
+      html += ui.picker('quality', 'Quality', picked ? picked.label : '—', free.length < 2);
       html += '<span class="grow"></span>';
-      html += `<button class="dl" data-el="download" type="button" ${picked ? '' : 'disabled'}>${I.down} Скачать</button>`;
-      html += `<button class="quiet" data-el="copy" type="button" ${picked ? '' : 'disabled'}>Ссылка</button>`;
+      html += `<button class="dl" data-el="download" type="button" ${picked ? '' : 'disabled'}>${I.down} Download</button>`;
+      html += `<button class="quiet" data-el="copy" type="button" ${picked ? '' : 'disabled'}>Copy link</button>`;
       html += `<button class="quiet" data-el="leech" type="button" ${picked ? '' : 'disabled'}>Leech</button>`;
       return html;
     },
@@ -1337,23 +1533,36 @@
       watchView.bindStrip();
 
       const note = store.status
-        || (store.current() && !store.free().length ? { kind: 'error', text: 'Все качества только для PRO' } : null);
+        || (store.current() && !store.free().length ? { kind: 'error', text: 'Every quality is PRO-only' } : null);
       ui.el.note.hidden = !note;
       ui.el.note.textContent = note ? note.text : '';
       ui.el.note.classList.toggle('error', note?.kind === 'error');
 
       batchView.update();
+
+      // The synopsis is the only free prose here. It stays in Russian until the
+      // on-device model answers, and stays in Russian for good if it cannot.
+      const synopsis = ui.el.synopsis;
+      if (synopsis && !synopsis.dataset.done) {
+        const original = site.description();
+        i18n.live(original, out => {
+          if (!ui.el.synopsis) return;
+          ui.el.synopsis.textContent = out;
+          ui.el.synopsis.dataset.done = '1';
+          ui.el.synopsis.title = original;
+        });
+      }
     },
 
     fillMenus() {
       const voices = actions.voices();
       ui.el.voiceMenu.innerHTML = ui.options(
-        voices.map(v => ({ value: v.id, label: `${flagFor(v.name) ? flagFor(v.name) + ' ' : ''}${v.name}` })),
+        voices.map(v => ({ value: v.id, label: voiceLabel(v) })),
         i => i.value === store.translator);
 
       if (ui.el.seasonMenu) {
         ui.el.seasonMenu.innerHTML = ui.options(
-          site.seasons().map(s => ({ value: s.id, label: s.label })),
+          site.seasons().map(s => ({ value: s.id, label: `Season ${s.id}` })),
           i => i.value === store.season);
       }
       ui.el.qualityMenu.innerHTML = ui.options(
@@ -1401,15 +1610,6 @@
     }
   };
 
-  const plural = (n, forms) => {
-    const a = Math.abs(n) % 100, b = a % 10;
-    if (a > 10 && a < 20) return forms[2];
-    if (b > 1 && b < 5) return forms[1];
-    if (b === 1) return forms[0];
-    return forms[2];
-  };
-
-  const EPISODES = ['серия', 'серии', 'серий'];
   const tag = i => `S${String(i.season).padStart(2, '0')}E${String(i.episode).padStart(2, '0')}`;
 
   const batchView = {
@@ -1437,10 +1637,10 @@
 
     markup() {
       if (!batch.available()) {
-        return `<h2>Скачать по порядку</h2>
-          <p class="hint warn">Недоступно: менеджер скриптов не даёт GM_download. Без него
-          не узнать, когда серия догрузилась, а значит нельзя ставить их в очередь.
-          Работает в Tampermonkey.</p>`;
+        return `<h2>Download in order</h2>
+          <p class="hint warn">Unavailable: your script manager does not provide GM_download.
+          Without it there is no way to tell when an episode finished, so episodes
+          cannot be queued. Works in Tampermonkey.</p>`;
       }
 
       if (batch.state === 'idle') {
@@ -1449,26 +1649,26 @@
         const eps = site.episodes()[sel.season] || [];
         const n = batch.plan(sel.season, sel.episode).length;
         return `
-          <h2>Скачать по порядку</h2>
+          <h2>Download in order</h2>
           <div class="line">
-            <select data-el="bSeason" aria-label="Начиная с сезона">${seasons.map(s =>
-              `<option value="${esc(s.id)}"${s.id === sel.season ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}</select>
-            <select data-el="bEpisode" aria-label="Начиная с серии">${eps.map(e =>
-              `<option value="${esc(e.id)}"${e.id === sel.episode ? ' selected' : ''}>${esc(e.id)} серия</option>`).join('')}</select>
-            <button class="dl" data-el="bStart" type="button">${I.down} Начать</button>
+            <select data-el="bSeason" aria-label="From season">${seasons.map(s =>
+              `<option value="${esc(s.id)}"${s.id === sel.season ? ' selected' : ''}>Season ${esc(s.id)}</option>`).join('')}</select>
+            <select data-el="bEpisode" aria-label="From episode">${eps.map(e =>
+              `<option value="${esc(e.id)}"${e.id === sel.episode ? ' selected' : ''}>Episode ${esc(e.id)}</option>`).join('')}</select>
+            <button class="dl" data-el="bStart" type="button">${I.down} Start</button>
           </div>
-          <p class="hint">${n} ${plural(n, EPISODES)} · до конца сериала · ${esc(store.selected()?.label || 'лучшее доступное')}</p>`;
+          <p class="hint">${n} ${n === 1 ? 'episode' : 'episodes'} · to the end of the show · ${esc(store.selected()?.label || 'best available')}</p>`;
       }
 
       const c = batch.counts();
       if (batch.state === 'done') {
         const bad = c.failed;
         return `
-          <h2>Скачивание завершено</h2>
-          <p class="hint">${c.done} из ${c.total}${bad ? ` · ${bad} не удалось` : ''}</p>
+          <h2>Queue finished</h2>
+          <p class="hint">${c.done} из ${c.total}${bad ? ` · ${bad} failed` : ''}</p>
           <div class="line">
-            ${bad ? `<button class="dl" data-el="bRetry" type="button">Повторить неудачные</button>` : ''}
-            <button class="quiet" data-el="bStop" type="button">Закрыть</button>
+            ${bad ? `<button class="dl" data-el="bRetry" type="button">Retry failed</button>` : ''}
+            <button class="quiet" data-el="bStop" type="button">Close</button>
           </div>`;
       }
 
@@ -1478,22 +1678,22 @@
       const paused = batch.state === 'paused';
 
       return `
-        <h2>${paused ? 'Пауза' : 'Скачивается'}</h2>
+        <h2>${paused ? 'Paused' : 'Downloading'}</h2>
         <div class="now">
           <b>${item ? tag(item) : '—'}</b>
-          <span data-el="bPct">${pct === null ? (paused ? 'остановлено' : 'подготовка…') : pct + '%'}</span>
+          <span data-el="bPct">${pct === null ? (paused ? 'stopped' : 'preparing…') : pct + '%'}</span>
         </div>
         <div class="bar"><i data-el="bBar" style="width:${pct || 0}%"></i></div>
         <div class="tally">
           <span>${c.done} / ${c.total}</span>
-          ${c.failed ? `<span class="bad">не удалось ${c.failed}</span>` : ''}
+          ${c.failed ? `<span class="bad">${c.failed} failed</span>` : ''}
         </div>
         <div class="line" style="padding-top:10px">
           ${paused
-            ? `<button class="dl" data-el="bResume" type="button">Продолжить</button>`
-            : `<button class="quiet" data-el="bPause" type="button">Пауза</button>
-               <button class="quiet" data-el="bSkip" type="button">Пропустить</button>`}
-          <button class="quiet" data-el="bStop" type="button">Стоп</button>
+            ? `<button class="dl" data-el="bResume" type="button">Resume</button>`
+            : `<button class="quiet" data-el="bPause" type="button">Pause</button>
+               <button class="quiet" data-el="bSkip" type="button">Skip</button>`}
+          <button class="quiet" data-el="bStop" type="button">Stop</button>
         </div>`;
     },
 
@@ -1532,8 +1732,8 @@
       const pages = site.pages();
       return `
       <main class="wrap">
-        <h1 class="gtitle">${esc(site.heading() || 'Каталог')}</h1>
-        ${cards.length ? `<div class="cards">${cards.map(gridView.card).join('')}</div>` : '<p class="empty">Ничего не найдено</p>'}
+        <h1 class="gtitle">${esc(site.heading() || 'Catalog')}</h1>
+        ${cards.length ? `<div class="cards">${cards.map(gridView.card).join('')}</div>` : '<p class="empty">Nothing found</p>'}
         ${pages.length ? `<nav class="pager">${pages.map(p =>
           `<a href="${esc(p.url)}">${esc(p.label)}</a>`).join('')}</nav>` : ''}
       </main>`;
@@ -1578,7 +1778,7 @@
 
     need() {
       if (store.current()) { const p = store.selected(); if (p) player.load(p); return; }
-      store.patch({ status: { kind: 'wait', text: 'Загружается…' } });
+      store.patch({ status: { kind: 'wait', text: 'Loading…' } });
       actions.fetch();
       actions.arm();
     },
@@ -1596,7 +1796,7 @@
     arm() {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
-        if (!store.current()) actions.fail('Сайт не ответил — обновите страницу');
+        if (!store.current()) actions.fail('No response — reload the page');
       }, 9000);
     },
 
@@ -1645,10 +1845,10 @@
       if (!pick) return;
       const name = filename(pick.label);
 
-      if (kind === 'copy') { GM_setClipboard(pick.url); ui.toast('Ссылка скопирована'); return; }
+      if (kind === 'copy') { GM_setClipboard(pick.url); ui.toast('Link copied'); return; }
       if (kind === 'leech') {
         GM_setClipboard(name);
-        ui.toast('Отправлено в Leech');
+        ui.toast('Sent to Leech');
         const target = pick.url.replace(/^https?:\/\//, m => (m.includes('https') ? 'secureleech://' : 'leech://'));
         const a = document.createElement('a');
         a.href = target;
@@ -1662,7 +1862,7 @@
       } else {
         anchorDownload(pick.url, name);
       }
-      ui.toast(`Скачивается ${pick.label}`);
+      ui.toast(`Downloading ${pick.label}`);
     }
   };
 

@@ -32,6 +32,30 @@ takeover only fires on pages it can actually render, and never blanks a page it 
 The original DOM is only ever hidden, never deleted, so the site's own scripts keep running
 underneath and nothing is lost.
 
+## Language
+
+The interface is in English, and the site's own text is brought across in three tiers,
+best first — nothing leaves your machine at any of them:
+
+1. **The site already knows.** Titles carry an original-language name in
+   `itemprop=alternativeHeadline`, so shows lead with their real English title
+   (*Great Teacher Onizuka*, not a machine's guess at it) with the local name underneath.
+   Films that genuinely have no English title keep their own.
+2. **A glossary.** Genres, countries, table headings, age ratings, runtimes and voiceover
+   types are a closed vocabulary that repeats on every page, so they are mapped exactly
+   and instantly — `Комедии, Драмы` → `Comedy, Drama`, `93 мин.` → `93 min`. Voiceover
+   names substitute known phrases while leaving studio names alone, so
+   `Дубляж HDrezka Studio` becomes `Dubbed HDrezka Studio`. Seasons and episodes are
+   labelled from their ids and never read as text at all.
+3. **On-device translation.** Chrome's `Translator` API handles the only free prose left,
+   the synopsis. This is best-effort: the browser has to have downloaded the ru→en model,
+   which needs Chrome 138+ and a user gesture. Until then — or for good, if the API is
+   absent — the original Russian stays on screen rather than leaving a gap, with the
+   source text on the element's `title`.
+
+Catalog cards get tier 2 as well, so `1996, США, Фантастика` reads `1996, USA, Sci-Fi`.
+Item titles themselves are left as the site wrote them.
+
 ## Reading the page
 
 The site is free to restyle whenever it likes, so the script reads whatever will
@@ -131,6 +155,7 @@ On load it prefers a Ukrainian voiceover when one exists, and moves off a PRO-on
 | `api` | `/ajax/get_cdn_series/`, parsing the quality list, ranking labels |
 | `store` | what's loaded and selected, keyed by voice + season + episode |
 | `player` | the `<video>` element and its chrome |
+| `i18n` | glossary and on-device translation |
 | `speed` | buffer cushion, throughput and file sizes |
 | `batch` | the whole-show download queue |
 | `views` | watch and grid, rendered into a shadow root |
