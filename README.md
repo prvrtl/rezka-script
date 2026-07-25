@@ -7,6 +7,8 @@ original download/copy/Leech actions the script started life as.
 The site already hands the browser plain MP4 URLs — everything here is built on data the
 page exposes to you anyway.
 
+**[prvrtl.github.io/rezka-script](https://prvrtl.github.io/rezka-script/)**
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
