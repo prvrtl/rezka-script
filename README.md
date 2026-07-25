@@ -33,6 +33,16 @@ search box in the header submits to the site's own search.
 Anything else — a profile page, a collection, the forum — is left completely alone. The
 takeover only fires on pages it can actually render, and never blanks a page it can't.
 
+**No flash of the old design.** The page is covered at `document-start`, before it
+paints, with a dark screen and a breathing logo mark drawn as pseudo-elements on `<html>`
+— there is no `<body>` to append anything to that early. When the UI is ready the cover
+fades straight into it.
+
+The cover can only ever be temporary. It comes off if the page turns out to be one this
+script does not render, if anything throws while rendering, or if eight seconds pass
+without the UI appearing. Sections the script has no business in are never covered at
+all, so a forum or profile page loads untouched.
+
 **Escape hatch:** *Original site* in the header removes the new UI and restores theirs.
 The original DOM is only ever hidden, never deleted, so the site's own scripts keep running
 underneath and nothing is lost. The `<body>` box is a special case: the site ships

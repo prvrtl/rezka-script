@@ -1039,3 +1039,45 @@ test('the batch progress bar does not reuse the header\'s class', async () => {
   const header = shadow(doc).querySelector('.bar');
   assert.ok(header && header.classList.contains('bar'), 'header keeps .bar to itself');
 });
+
+// ------------------------------------------------------------ boot cover ----
+
+test('the cover is styled to hide the page before it paints', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  const css = doc.getElementById('rzk-takeover').textContent;
+  assert.match(css, /html\[data-rzk\]\s*body\s*>\s*\*:not\(#rzk-app\)/, 'hides in both states');
+  assert.match(css, /html\[data-rzk\]::before/, 'full-viewport cover');
+  assert.match(css, /rzk-breathe/, 'loading animation');
+  assert.match(css, /prefers-reduced-motion/, 'animation is opt-out');
+});
+
+test('a rendered page ends up covered by our own UI, not the cover', async () => {
+  const { doc } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+
+  assert.equal(doc.documentElement.getAttribute('data-rzk'), 'on');
+});
+
+test('a section we do not render is never covered at all', async () => {
+  const { doc } = load('<!doctype html><html><body><h1>Форум</h1></body></html>', {
+    url: 'https://rezka-ua.tv/forum/index.php',
+  });
+  await settle();
+
+  assert.equal(doc.documentElement.hasAttribute('data-rzk'), false, 'no flash of black on a page we skip');
+  assert.equal(doc.getElementById('rzk-app'), null);
+});
+
+test('a page in our sections that turns out to be unrenderable is uncovered again', async () => {
+  // The URL says catalog, so the cover goes up before the markup is known —
+  // and must come back off once it is clear there is nothing to show.
+  const { doc } = load('<!doctype html><html><body><p>Ничего нет</p></body></html>', {
+    url: 'https://rezka-ua.tv/films/',
+  });
+  await settle();
+
+  assert.equal(doc.documentElement.hasAttribute('data-rzk'), false, 'the site must come back');
+  assert.equal(doc.getElementById('rzk-app'), null);
+});

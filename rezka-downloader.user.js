@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.4
+// @version        3.5
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1235,7 +1235,8 @@
       ui.cache();
       ui.bindBar();
 
-      // Only hide the original once ours is actually standing.
+      // The cover becomes the real thing: swap boot -> on and let it fade.
+      clearTimeout(bootTimer);
       document.documentElement.setAttribute('data-rzk', 'on');
       holdBody();
     },
@@ -2037,16 +2038,95 @@
     if (!parent) return false;
     const style = document.createElement('style');
     style.id = 'rzk-takeover';
-    style.textContent = `html[data-rzk="on"] body > *:not(#rzk-app) { display: none !important; }
-                         html[data-rzk="on"] { background: #0b0b0e; }
-                         html[data-rzk="on"] body {
-                           overflow: auto !important;
-                           padding: 0 !important;
-                           margin: 0 !important;
-                           background: #0b0b0e !important;
-                         }`;
+    // Both states hide the original. "boot" additionally paints a cover over
+    // the whole viewport, drawn with pseudo-elements on <html> because at
+    // document-start there is no <body> to append anything to yet.
+    style.textContent = `
+      html[data-rzk] body > *:not(#rzk-app) { display: none !important; }
+      html[data-rzk] { background: #0b0b0e; }
+      html[data-rzk] body {
+        overflow: auto !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #0b0b0e !important;
+      }
+
+      html[data-rzk]::before, html[data-rzk]::after {
+        content: ''; position: fixed; z-index: 2147483646; pointer-events: none;
+      }
+      html[data-rzk]::before {
+        inset: 0; background: #0b0b0e; opacity: 1; transition: opacity .3s ease;
+      }
+      html[data-rzk]::after {
+        left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+        border-radius: 10px; background: linear-gradient(135deg, #4aa8ff, #0a5cff);
+        box-shadow: 0 8px 24px rgba(10, 92, 255, .35);
+        animation: rzk-breathe 1.15s ease-in-out infinite;
+      }
+      html[data-rzk="on"]::before, html[data-rzk="on"]::after {
+        animation: none; opacity: 0; visibility: hidden;
+        transition: opacity .3s ease, visibility 0s linear .3s;
+      }
+      html[data-rzk="on"] #rzk-app { animation: rzk-arrive .3s ease both; }
+
+      @keyframes rzk-breathe {
+        0%, 100% { transform: scale(.86); opacity: .45; }
+        50% { transform: scale(1); opacity: 1; }
+      }
+      @keyframes rzk-arrive { from { opacity: 0; } to { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) {
+        html[data-rzk]::after { animation: none; }
+        html[data-rzk="on"] #rzk-app { animation: none; }
+      }`;
     parent.appendChild(style);
     return true;
+  }
+
+  // Sections whose pages this script renders. Checked against the URL alone so
+  // the cover can go up before the first paint, long before any markup exists.
+  const OWNED = ['/films', '/series', '/cartoons', '/animation', '/search', '/page', '/best'];
+
+  function likelyOurs(p) {
+    if (p === '' || p === '/') return true;
+    if (ID_IN_PATH.test(p)) return true;
+    return OWNED.some(root => p === root || p.startsWith(root + '/'));
+  }
+
+  let bootTimer = null;
+
+  /**
+   * Cover the page before it paints. The rule is that this can only ever be
+   * temporary: whatever happens next — a page we do not render, a thrown error,
+   * or simply taking too long — the cover comes off and the site is returned.
+   */
+  function beginBoot() {
+    let here = '';
+    try { here = location.pathname || ''; } catch (e) {}
+    if (!likelyOurs(here)) return;
+
+    // At document-start the document can be genuinely empty — no <html> yet.
+    // Waiting for it is the difference between covering the page and letting
+    // it flash.
+    if (!document.documentElement) {
+      new MutationObserver((_, obs) => {
+        if (!document.documentElement) return;
+        obs.disconnect();
+        beginBoot();
+      }).observe(document, { childList: true, subtree: true });
+      return;
+    }
+
+    if (!armTakeover()) return;
+    document.documentElement.setAttribute('data-rzk', 'boot');
+    bootTimer = setTimeout(reveal, 8000);
+  }
+
+  /** Take the cover off, unless our own UI is already up behind it. */
+  function reveal() {
+    clearTimeout(bootTimer);
+    if (document.documentElement.getAttribute('data-rzk') === 'boot') {
+      document.documentElement.removeAttribute('data-rzk');
+    }
   }
 
   // Nothing here may throw its way out: a failure in one step must not stop the
@@ -2059,13 +2139,14 @@
   function boot() {
     guard('takeover', armTakeover);
     const kind = guard('detect', () => site.kind());
-    if (!kind) return;
+    if (!kind) { reveal(); return; }
     guard('render', () => {
       try {
         if (kind === 'watch') initWatch();
         else ui.mount(gridView.render());
       } catch (e) {
         // Give the real site back rather than stranding the reader.
+        clearTimeout(bootTimer);
         document.documentElement.removeAttribute('data-rzk');
         releaseBody();
         document.getElementById('rzk-app')?.remove();
@@ -2075,7 +2156,7 @@
   }
 
   guard('intercept', interceptXHR);
-  guard('takeover', armTakeover);
+  guard('boot-cover', beginBoot);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();

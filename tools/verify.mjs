@@ -33,6 +33,18 @@ const SHIMS = `
   window.GM_download = (o) => { window.__rzkDownloads.push(o); };
   window.GM_getValue = (k, d) => { try { const v = localStorage.getItem('gm:' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
   window.GM_setValue = (k, v) => { try { localStorage.setItem('gm:' + k, JSON.stringify(v)); } catch (e) {} };
+  // Record every data-rzk transition so the run can prove the original page
+  // was never left visible between load and takeover.
+  // documentElement may not exist yet at this point, so observe the document
+  // itself rather than an element that is not there.
+  window.__rzkStates = [null];
+  try {
+    new MutationObserver(() => {
+      const v = document.documentElement ? document.documentElement.getAttribute('data-rzk') : null;
+      const seen = window.__rzkStates;
+      if (seen[seen.length - 1] !== v) seen.push(v);
+    }).observe(document, { attributes: true, subtree: true, attributeFilter: ['data-rzk'] });
+  } catch (e) { window.__rzkObsErr = String(e); }
   window.__rzkErrors = [];
   window.addEventListener('error', (e) => {
     window.__rzkErrors.push((e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
@@ -166,6 +178,11 @@ for (const [name, url] of targets) {
     continue;
   }
   check(r.takenOver, 'original page hidden');
+
+  const states = await page.evaluate(() => window.__rzkStates || []);
+  const seq = states.filter((v, i) => i === 0 || v !== states[i - 1]);
+  check(seq[0] === null && seq[1] === 'boot', 'covered before first paint', seq.join(' → '));
+  check(seq[seq.length - 1] === 'on', 'cover handed over to the UI', seq.join(' → '));
 
   // The site's own body padding used to leave a tall empty band above the app.
   const chrome = await page.evaluate(() => {
