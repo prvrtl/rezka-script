@@ -97,13 +97,13 @@
   .score i { color: #f5c451; font-style: normal; }
 
   .screen { position: relative; margin-top: 16px; aspect-ratio: 16/9; border-radius: 12px;
-            overflow: hidden; border: 1px solid var(--line);
-            background:
-              radial-gradient(120% 90% at 30% 20%, #2a3346 0%, transparent 60%),
-              radial-gradient(90% 80% at 78% 72%, #3a2230 0%, transparent 62%),
-              #0b0d12;
+            overflow: hidden; border: 1px solid var(--line); background: #05070a;
             display: grid; place-items: center; }
-  .play { width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.95);
+  .still { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  /* The still is absolutely positioned, so the button needs its own stacking
+     position or it paints underneath. */
+  .play { position: relative; z-index: 1;
+          width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.95);
           display: grid; place-items: center; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
   .play::after { content: ''; width: 0; height: 0; margin-left: 4px;
                  border-left: 17px solid #0a0a0d;
@@ -214,17 +214,16 @@
     <div class="aura"></div>
     <div class="wrap">
       <p class="eyebrow">Userscript · MIT</p>
-      <h1>Their backend.<br><span class="fade">A new front end.</span></h1>
+      <h1>A new interface<br><span class="fade">for HDrezka</span></h1>
       <p class="lede">
-        Rezka Downloader throws away the HDrezka interface and rebuilds it: a real video
-        element playing the direct file, an English UI, a queue that pulls a whole show
-        episode by episode, and a live read on whether your connection can keep up.
+        Plays the video file directly instead of going through the site's player, shows
+        everything in English, and can download a series one episode at a time.
       </p>
       <div class="cta">
         <a class="solid" href="https://raw.githubusercontent.com/prvrtl/rezka-script/main/rezka-downloader.user.js">Install the script</a>
         <a class="ghost" href="https://github.com/prvrtl/rezka-script">Read the source</a>
       </div>
-      <p class="fine">Needs <code>Tampermonkey</code> or <code>Violentmonkey</code>. Updates come straight from the repo.</p>
+      <p class="fine">Needs <code>Tampermonkey</code> or <code>Violentmonkey</code>. Updates come from this repo.</p>
     </div>
   </section>
 
@@ -250,6 +249,63 @@
           </div>
 
           <div class="screen">
+            <!-- Original artwork. Not a frame from any film. -->
+            <svg class="still" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <defs>
+                <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#16323f"/>
+                  <stop offset=".45" stop-color="#123043"/>
+                  <stop offset="1" stop-color="#070d14"/>
+                </linearGradient>
+                <radialGradient id="sun" cx=".72" cy=".62" r=".46">
+                  <stop offset="0" stop-color="#ff9d4d" stop-opacity=".85"/>
+                  <stop offset=".45" stop-color="#c9622a" stop-opacity=".35"/>
+                  <stop offset="1" stop-color="#c9622a" stop-opacity="0"/>
+                </radialGradient>
+                <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#8fd2e6" stop-opacity="0"/>
+                  <stop offset="1" stop-color="#8fd2e6" stop-opacity=".16"/>
+                </linearGradient>
+                <linearGradient id="shaft" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#ffd9a8" stop-opacity=".20"/>
+                  <stop offset="1" stop-color="#ffd9a8" stop-opacity="0"/>
+                </linearGradient>
+                <filter id="grain">
+                  <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
+                  <feColorMatrix type="saturate" values="0"/>
+                </filter>
+                <filter id="soft"><feGaussianBlur stdDeviation="1.6"/></filter>
+              </defs>
+
+              <rect width="160" height="90" fill="url(#sky)"/>
+              <rect width="160" height="90" fill="url(#sun)"/>
+
+              <!-- distant towers -->
+              <g fill="#0b1620" opacity=".85" filter="url(#soft)">
+                <rect x="8" y="40" width="9" height="50"/><rect x="21" y="33" width="7" height="57"/>
+                <rect x="32" y="45" width="11" height="45"/><rect x="47" y="28" width="8" height="62"/>
+                <rect x="59" y="47" width="6" height="43"/><rect x="92" y="36" width="10" height="54"/>
+                <rect x="106" y="44" width="7" height="46"/><rect x="118" y="30" width="9" height="60"/>
+                <rect x="132" y="46" width="12" height="44"/><rect x="148" y="38" width="8" height="52"/>
+              </g>
+
+              <!-- light shafts -->
+              <g opacity=".55">
+                <polygon points="46,0 54,0 40,90 24,90" fill="url(#shaft)"/>
+                <polygon points="104,0 112,0 128,90 112,90" fill="url(#shaft)"/>
+              </g>
+
+              <rect y="52" width="160" height="38" fill="url(#haze)"/>
+
+              <!-- foreground silhouette -->
+              <g fill="#03060a">
+                <ellipse cx="38" cy="74" rx="6.4" ry="7.6"/>
+                <path d="M22 90c0-9 7.2-15 16-15s16 6 16 15z"/>
+              </g>
+              <rect y="86" width="160" height="4" fill="#03060a"/>
+
+              <rect width="160" height="90" filter="url(#grain)" opacity=".07"/>
+            </svg>
             <div class="play"></div>
             <div class="chrome">
               <div class="track"><i></i></div>
@@ -277,46 +333,41 @@
       <h2>What it does</h2>
       <div class="grid">
         <div class="cell">
-          <span class="tag">player</span>
-          <h3>Plays the file, not the page</h3>
-          <p>A real <code>&lt;video&gt;</code> on the direct link — no Premium banner, no player
-             chrome you didn't ask for. Keyboard control, resume per episode, and autoplay into
-             the next one.</p>
+          <h3>Player</h3>
+          <p>The direct file plays in an ordinary video element — keyboard shortcuts, resume
+             where you left off, and it moves to the next episode on its own. One button hands
+             the frame to the browser's own controls, which adds playback speed and
+             picture-in-picture.</p>
         </div>
         <div class="cell">
-          <span class="tag">native mode</span>
-          <h3>Or hand it to the browser</h3>
-          <p>One button switches to the browser's own controls, bringing subtitles, playback
-             speed, picture-in-picture and cast. Subtitle tracks come from the site's own
-             WebVTT files, listed by language.</p>
+          <h3>Subtitles</h3>
+          <p>Some voiceovers come with WebVTT subtitle tracks. Those are attached to the player,
+             so the browser lists them by language and starts the one the site marks as default.
+             Most tracks have none — the original-audio one usually does.</p>
         </div>
         <div class="cell">
-          <span class="tag">queue</span>
-          <h3>A whole show, unattended</h3>
-          <p>Pick a season and episode; it downloads to the end of the series, one at a time,
-             rolling into the next season. Retries on failure, never stops on one, and saves
-             progress after every episode.</p>
+          <h3>Downloading a series</h3>
+          <p>Pick a season and episode and it works through to the end of the show, one file at
+             a time, carrying on into the next season. Failures are retried and then skipped
+             rather than stopping the run, and progress is saved after every episode.</p>
         </div>
         <div class="cell">
-          <span class="tag">english</span>
-          <h3>Readable, without a round trip</h3>
-          <p>The interface is English. Titles use the site's own original-language name; genres,
-             countries and voiceover types come from a built-in glossary. Nothing is sent
-             anywhere to translate.</p>
+          <h3>English</h3>
+          <p>Genres, countries, table headings and voiceover types come from a list built into
+             the script. Titles use the original-language name the site already stores, so shows
+             get their real English title rather than a translation of the Russian one.</p>
         </div>
         <div class="cell">
-          <span class="tag">throughput</span>
-          <h3>Know before it stalls</h3>
-          <p>A live readout of seconds buffered, fill rate and — where the size is readable —
-             throughput and file size. Buffer depth is what predicts a stall, so a paced CDN
-             isn't misreported as failing.</p>
+          <h3>Connection</h3>
+          <p>While something is playing it shows how many seconds are buffered and how quickly
+             the file is arriving, which is usually enough to tell whether the quality you picked
+             is going to hold.</p>
         </div>
         <div class="cell">
-          <span class="tag">durability</span>
-          <h3>Survives a redesign</h3>
-          <p>Everything is read from the URL, <code>og:</code> tags, microdata and
-             <code>data-</code> attributes before any class name. A test runs the whole UI
-             against a page with every structural class renamed.</p>
+          <h3>If the site changes</h3>
+          <p>Everything is read from the URL, meta tags and data attributes before any CSS class
+             name, because those are the parts the site is least likely to change. A restyle on
+             their end shouldn't break it.</p>
         </div>
       </div>
     </div>
@@ -351,19 +402,17 @@
 
   <section class="rise">
     <div class="wrap">
-      <h2>Held to evidence</h2>
-      <div class="proof">
-        <div class="stat"><b>94</b><span>unit tests</span></div>
-        <div class="stat"><b>126</b><span>live checks</span></div>
-        <div class="stat"><b>1</b><span>file, no build step</span></div>
-        <div class="stat"><b>0</b><span>external requests</span></div>
-      </div>
+      <h2>Worth knowing</h2>
+      <p class="lede" style="margin:0 0 22px;max-width:68ch;text-align:left;font-size:16px">
+        It's a single file with no build step. There's a test suite that runs the real script
+        against saved copies of the site's pages, and a script that loads it into the live site
+        and checks the interface actually works before each release.
+      </p>
       <div class="note">
-        <b>Two honest limits.</b> Each voiceover is a separate file rather than several audio
-        tracks in one container, so no player can list them in an audio menu — the Voice picker
-        is how you switch. And a few releases are served only as HLS, which a plain video
-        element can't play; those hand playback back to the site's own player rather than
-        showing a dead frame.
+        <b>Two limits.</b> Each voiceover is a separate file rather than several audio tracks in
+        one, so there's no way for any player to offer an audio-track menu — the Voice picker is
+        how you switch. And a few releases are served only as HLS, which a plain video element
+        can't play; those fall back to the site's own player instead of showing a dead frame.
       </div>
     </div>
   </section>
