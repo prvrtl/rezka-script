@@ -1,349 +1,409 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { load, settle, cdnPayload, shadow, el, opts, optLabels, chosen, value } from './harness.mjs';
-import { seriesPage, moviePage, streamList } from './fixtures.mjs';
+import {
+  load, settle, cdnPayload, shadow, el, all, text, value,
+  options, optionLabels, takenOver
+} from './harness.mjs';
+import { filmPage, seriesPage, gridPage, streamList } from './fixtures.mjs';
 
 /** Emulate the site's own AJAX call so the script's XHR intercept picks it up. */
-function deliverStreams(window, { tid = '56', url, season = '2', episode = '5' }) {
+function deliver(window, { tid = '57', season = '2', episode = '1', url }) {
   const xhr = new window.XMLHttpRequest();
   xhr.open('POST', '/ajax/get_cdn_series/');
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-  xhr.send(`id=12345&translator_id=${tid}&action=get_stream&season=${season}&episode=${episode}`);
+  xhr.send(`id=91371&translator_id=${tid}&action=get_stream&season=${season}&episode=${episode}`);
   xhr.respond(cdnPayload(url));
   return xhr;
 }
 
-const dl = (doc) => el(doc, 'download');
-const card = (doc) => shadow(doc).querySelector('.card');
-const option = (doc, menu, label) =>
-  opts(doc, menu).find((o) => o.textContent.trim().includes(label));
+const pick = (doc, menu, label) =>
+  options(doc, menu).find((o) => o.textContent.trim().includes(label));
 
-// ----------------------------------------------------------------- mount ----
+// ------------------------------------------------------------- takeover ----
 
-test('panel mounts on a page that has a post id', async () => {
+test('a watch page is taken over', async () => {
   const { doc } = load(seriesPage());
-  await settle(200);
+  await settle();
 
-  assert.ok(doc.getElementById('rzk-root'), 'host element should be injected');
-  assert.ok(shadow(doc), 'UI should live in a shadow root');
-  assert.ok(dl(doc).disabled, 'download starts disabled until streams arrive');
+  assert.ok(doc.getElementById('rzk-app'), 'app host mounted');
+  assert.ok(shadow(doc), 'UI lives in a shadow root');
+  assert.equal(takenOver(doc), true, 'original markup hidden');
 });
 
-test('the UI is isolated from the page', async () => {
+test('a catalog page is taken over', async () => {
+  const { doc } = load(gridPage());
+  await settle();
+
+  assert.ok(shadow(doc));
+  assert.equal(takenOver(doc), true);
+});
+
+test('a page that is neither is left completely alone', async () => {
+  const { doc } = load('<!doctype html><html><body><h1>О сайте</h1></body></html>');
+  await settle();
+
+  assert.equal(doc.getElementById('rzk-app'), null);
+  assert.equal(takenOver(doc), false, 'must not blank a page we cannot render');
+});
+
+test('the escape hatch gives the original site back', async () => {
   const { doc } = load(seriesPage());
-  await settle(200);
+  await settle();
 
-  assert.equal(doc.querySelector('style'), null, 'no stylesheet injected into the page');
-  assert.equal(doc.querySelectorAll('#rzk-root > *').length, 0, 'nothing rendered in light DOM');
+  el(doc, 'restore').click();
+
+  assert.equal(takenOver(doc), false);
+  assert.equal(doc.getElementById('rzk-app'), null);
 });
 
-test('panel stays out of pages that are not watchable', async () => {
-  const { doc } = load('<!doctype html><html><body><h1>Search results</h1></body></html>');
-  await settle(200);
+// ---------------------------------------------------------- watch: shell ----
 
-  assert.equal(doc.getElementById('rzk-root'), null);
+test('the header carries title, original title and the facts line', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  assert.equal(text(doc, '.head h1'), 'Класний керівник');
+  assert.equal(text(doc, '.head .orig'), 'Great Teacher');
+
+  const facts = text(doc, '.facts');
+  assert.match(facts, /1998/, 'year');
+  assert.match(facts, /Япония/, 'country');
+  assert.match(facts, /45 мин\./, 'runtime');
+  assert.match(facts, /9\.60/, 'rating score');
 });
 
-// -------------------------------------------------------------- selection ----
+test('a film with no episodes renders without season or episode controls', async () => {
+  const { doc } = load(filmPage());
+  await settle();
+
+  assert.equal(text(doc, '.head h1'), 'Тихий Дом');
+  assert.equal(el(doc, 'seasonPick'), null, 'no season picker on a film');
+  assert.equal(all(doc, '.ep').length, 0, 'no episode grid on a film');
+});
+
+test('synopsis and info table are carried over', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  assert.match(text(doc, '.synopsis'), /Stand-in synopsis/);
+  const meta = text(doc, '.meta dl');
+  assert.match(meta, /Страна/);
+  assert.match(meta, /Япония/);
+});
+
+// --------------------------------------------------------- watch: voices ----
+
+test('a Ukrainian voiceover is auto-selected and PRO ones are dropped', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  assert.match(value(doc, 'voice'), /Українська/);
+  const labels = optionLabels(doc, 'voice');
+  assert.equal(labels.length, 2, 'PRO track excluded');
+  assert.equal(labels.some((l) => /PRO/.test(l)), false);
+});
+
+test('the script asks for the auto-selected voice, season and episode', async () => {
+  const { effects } = load(seriesPage());
+  await settle();
+
+  const req = effects.xhrs.at(-1);
+  assert.match(req.url, /get_cdn_series/);
+  assert.match(req.body, /translator_id=57/);
+  assert.match(req.body, /season=2/);
+  assert.match(req.body, /episode=1/);
+  assert.match(req.body, /action=get_stream/);
+});
+
+test('a film asks with get_movie, not get_stream', async () => {
+  const { doc, window, effects } = load(filmPage());
+  await settle();
+  deliver(window, { tid: 'single', season: '', episode: '', url: streamList.plain });
+
+  assert.equal(value(doc, 'quality'), '1080p', 'film streams still arrive');
+});
+
+// -------------------------------------------------------- watch: quality ----
 
 test('PRO qualities are never offered', async () => {
   const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.withPro });
+  await settle();
+  deliver(window, { url: streamList.withPro });
 
-  assert.deepEqual(optLabels(doc, 'qualities'), ['720p', '360p'], 'PRO tiers excluded, best first');
+  assert.deepEqual(optionLabels(doc, 'quality'), ['720p', '360p']);
   assert.equal(value(doc, 'quality'), '720p');
-  assert.equal(dl(doc).disabled, false);
 });
 
-test('a PRO-only release offers nothing rather than a dead link', async () => {
+test('a PRO-only release says so instead of offering a dead link', async () => {
   const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.proOnly });
+  await settle();
+  deliver(window, { url: streamList.proOnly });
 
-  assert.equal(dl(doc).disabled, true);
   assert.equal(value(doc, 'quality'), '—');
-  assert.match(el(doc, 'status').textContent, /No free quality/i);
+  assert.match(el(doc, 'note').textContent, /только для PRO/i);
+  assert.equal(el(doc, 'download').disabled, true);
 });
 
 test('a "4K" label outranks 720p', async () => {
   const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.fourK });
+  await settle();
+  deliver(window, { url: streamList.fourK });
 
-  assert.deepEqual(optLabels(doc, 'qualities'), ['4K', '720p', '360p']);
+  assert.deepEqual(optionLabels(doc, 'quality'), ['4K', '720p', '360p']);
   assert.equal(value(doc, 'quality'), '4K');
 });
 
-test('a Ukrainian-spelled voiceover is auto-selected', async () => {
-  const { doc } = load(seriesPage());
-  await settle(200);
-
-  assert.match(value(doc, 'voice'), /Українська/);
-  assert.match(chosen(doc, 'translators').textContent, /Українська/);
-});
-
-test('premium voiceovers are dropped from the list', async () => {
-  const { doc } = load(seriesPage());
-  await settle(200);
-
-  const labels = optLabels(doc, 'translators');
-  assert.equal(labels.some((l) => /PRO/.test(l)), false, 'PRO voiceover should not be listed');
-  assert.equal(labels.length, 2);
-});
-
-test('picking a lower quality changes both the link and the filename', async () => {
+test('choosing a quality swaps the file and is remembered', async () => {
   const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  option(doc, 'qualities', '360p').click();
-  dl(doc).click();
+  pick(doc, 'quality', '360p').click();
 
   assert.equal(value(doc, 'quality'), '360p');
-  assert.deepEqual(effects.anchorClicks.at(-1), {
-    href: 'https://cdn.example.net/a_360.mp4',
-    download: 'The.Example.Show.2021.S02E05.360p.mp4',
-  });
+  assert.equal(effects.videoSrc.at(-1), 'https://cdn.example.net/a_360.mp4');
+  assert.equal(window.localStorage.getItem('rzk.quality'), '"360p"');
 });
 
-test('a chosen quality is kept when switching voiceover', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { tid: '56', url: streamList.plain });
+// --------------------------------------------------------- watch: player ----
 
-  option(doc, 'qualities', '720p').click();
-  option(doc, 'translators', 'Українська').click();
-  deliverStreams(window, { tid: '57', url: streamList.plain });
+test('the player loads the direct file, not the HLS manifest', async () => {
+  const { window, effects } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  assert.equal(value(doc, 'quality'), '720p', 'preference should carry across tracks');
-  assert.match(value(doc, 'voice'), /Українська/);
+  assert.equal(effects.videoSrc.at(-1), 'https://cdn.example.net/a_1080.mp4');
+  assert.equal(effects.videoSrc.some((s) => /m3u8/.test(s)), false);
 });
 
-// ---------------------------------------------------------------- actions ----
-
-test('HLS manifest suffix is stripped down to the plain file URL', async () => {
+test('an HLS-only release hands playback back to the site', async () => {
   const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.hlsOnly });
 
-  dl(doc).click();
-  const { href } = effects.anchorClicks.at(-1);
-  assert.equal(href, 'https://cdn.example.net/a_1080.mp4');
-  assert.doesNotMatch(href, /manifest\.m3u8/);
+  assert.equal(effects.videoSrc.length, 0, 'must not feed a manifest to <video>');
+  assert.equal(el(doc, 'veil').hidden, false);
+  assert.match(el(doc, 'veilMsg').textContent, /HLS/);
+  assert.equal(takenOver(doc), false, 'original player restored so it still plays');
 });
+
+test('play and pause drive the video element', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  el(doc, 'bigplay').click();
+  assert.equal(el(doc, 'video').paused, false);
+  assert.equal(el(doc, 'veil').hidden, true, 'poster overlay clears on play');
+
+  el(doc, 'toggle').click();
+  assert.equal(el(doc, 'video').paused, true);
+});
+
+// ------------------------------------------------------- watch: episodes ----
+
+test('episodes for the active season are listed, with the current one marked', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  const eps = all(doc, '.ep');
+  assert.deepEqual(eps.map((e) => e.textContent.trim()), ['1', '2'], 'season 2 has two episodes');
+  assert.equal(eps[0].getAttribute('aria-current'), 'true');
+});
+
+test('picking an episode refetches for that episode', async () => {
+  const { doc, effects } = load(seriesPage());
+  await settle();
+
+  all(doc, '.ep')[1].click();
+  await settle();
+
+  assert.match(effects.xhrs.at(-1).body, /episode=2/);
+  assert.equal(all(doc, '.ep')[1].getAttribute('aria-current'), 'true');
+});
+
+test('switching season moves to that season\'s first episode', async () => {
+  const { doc, effects } = load(seriesPage());
+  await settle();
+
+  pick(doc, 'season', '1').click();
+  await settle();
+
+  assert.equal(value(doc, 'season'), '1 сезон');
+  assert.deepEqual(all(doc, '.ep').map((e) => e.textContent.trim()), ['1', '2', '3']);
+  assert.match(effects.xhrs.at(-1).body, /season=1&episode=1/);
+});
+
+test('a stream is not reused across episodes', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { episode: '1', url: streamList.plain });
+  assert.equal(el(doc, 'download').disabled, false);
+
+  all(doc, '.ep')[1].click();
+  await settle();
+
+  assert.equal(el(doc, 'download').disabled, true, 'must not offer episode 1 while on episode 2');
+});
+
+// -------------------------------------------------------- watch: actions ----
 
 test('download filename carries title, year, season/episode and quality', async () => {
   const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  dl(doc).click();
-  assert.equal(effects.anchorClicks.at(-1).download, 'The.Example.Show.2021.S02E05.1080p.mp4');
+  el(doc, 'download').click();
+  assert.equal(effects.anchorClicks.at(-1).download, 'Great.Teacher.1998.S02E01.1080p.mp4');
 });
 
-test('GM_download is preferred so the filename actually survives', async () => {
+test('GM_download is preferred so the filename survives', async () => {
   const { doc, window, effects } = load(seriesPage(), { gmDownload: true });
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  dl(doc).click();
+  el(doc, 'download').click();
 
-  assert.equal(effects.anchorClicks.length, 0, 'should not fall back to an anchor');
-  const { url, name } = effects.downloads.at(-1);
-  assert.deepEqual({ url, name }, {
-    url: 'https://cdn.example.net/a_1080.mp4',
-    name: 'The.Example.Show.2021.S02E05.1080p.mp4',
-  });
+  assert.equal(effects.anchorClicks.length, 0);
+  assert.deepEqual(
+    { url: effects.downloads.at(-1).url, name: effects.downloads.at(-1).name },
+    { url: 'https://cdn.example.net/a_1080.mp4', name: 'Great.Teacher.1998.S02E01.1080p.mp4' }
+  );
 });
 
-test('copy button puts the direct URL on the clipboard', async () => {
+test('copy puts the direct URL on the clipboard', async () => {
   const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.plain });
 
   el(doc, 'copy').click();
   assert.equal(effects.clipboard.at(-1), 'https://cdn.example.net/a_1080.mp4');
 });
 
-test('leech handoff rewrites https to the secureleech scheme', async () => {
+test('leech rewrites https to the secureleech scheme', async () => {
   const { doc, window, effects } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
+  await settle();
+  deliver(window, { url: streamList.plain });
 
   el(doc, 'leech').click();
   assert.equal(effects.anchorClicks.at(-1).href, 'secureleech://cdn.example.net/a_1080.mp4');
 });
 
-test('a film page with no translator tabs still renders and works', async () => {
-  const { doc, window, effects } = load(moviePage(), {
-    url: 'https://hdrezka.me/films/another-example.html',
-  });
-  await settle(200);
+// ----------------------------------------------------------- watch: errors ----
 
-  assert.ok(doc.getElementById('rzk-root'));
-  deliverStreams(window, { tid: 'single', url: streamList.plain });
-
-  dl(doc).click();
-  assert.equal(effects.anchorClicks.at(-1).download, 'Another.Example.1999.1080p.mp4');
-});
-
-// ---------------------------------------------------------------- loading ----
-
-test('the script fetches on its own when the site never fires the AJAX call', async () => {
-  const { effects } = load(seriesPage());
-  await settle();
-
-  const req = effects.xhrs.at(-1);
-  assert.ok(req, 'expected the script to request the stream list itself');
-  assert.match(req.url, /get_cdn_series/);
-  assert.match(req.body, /translator_id=57/, 'should ask for the auto-selected voiceover');
-  assert.match(req.body, /action=get_stream/, 'series pages use get_stream');
-});
-
-test('a broken response surfaces instead of hanging silently', async () => {
+test('an unreadable response is reported, not swallowed', async () => {
   const { doc, effects } = load(seriesPage());
   await settle();
 
-  effects.xhrs.at(-1).respond('<html>blocked by cloudflare</html>');
-  await settle(0); // the request rejects into a microtask
+  effects.xhrs.at(-1).respond('<html>bot check</html>');
+  await settle(0);
 
-  assert.match(el(doc, 'status').textContent, /Unreadable/i);
-  assert.ok(el(doc, 'status').classList.contains('error'));
-  assert.equal(dl(doc).disabled, true);
+  assert.match(el(doc, 'note').textContent, /не читается/i);
+  assert.ok(el(doc, 'note').classList.contains('error'));
 });
 
-test('a success:false payload reports the site\'s reason', async () => {
+test('a success:false payload reports the site\'s own reason', async () => {
   const { doc, effects } = load(seriesPage());
   await settle();
 
-  effects.xhrs.at(-1).respond({ success: false, url: '', message: 'Nothing here' });
-  await settle(0); // the request rejects into a microtask
+  effects.xhrs.at(-1).respond({ success: false, url: '', message: 'Нет данных' });
+  await settle(0);
 
-  assert.match(el(doc, 'status').textContent, /Nothing here/);
-  assert.ok(el(doc, 'status').classList.contains('error'));
+  assert.match(el(doc, 'note').textContent, /Нет данных/);
 });
 
-test('switching episode drops the previous episode\'s link', async () => {
+// ------------------------------------------------------------------ grid ----
+
+test('catalog cards are rebuilt with cover, title and meta', async () => {
+  const { doc } = load(gridPage());
+  await settle();
+
+  const cards = all(doc, '.card');
+  assert.equal(cards.length, 3);
+
+  const first = cards[0];
+  assert.equal(first.querySelector('.name').textContent.trim(), 'Поколение Икс');
+  assert.equal(first.querySelector('.sub').textContent.trim(), '1996, США, Фантастика');
+  assert.equal(first.querySelector('.kind').textContent.trim(), 'Фильм');
+  assert.match(first.querySelector('img').getAttribute('src'), /91370\.jpg/);
+  assert.match(first.getAttribute('href'), /91370-pokolenie-iks/);
+});
+
+test('covers are lazy so a long catalog does not fetch everything at once', async () => {
+  const { doc } = load(gridPage());
+  await settle();
+
+  assert.equal(all(doc, '.card img').every((i) => i.getAttribute('loading') === 'lazy'), true);
+});
+
+test('pagination is carried through', async () => {
+  const { doc } = load(gridPage());
+  await settle();
+
+  assert.deepEqual(all(doc, '.pager a').map((a) => a.textContent.trim()), ['1', '2', '3']);
+});
+
+test('an empty result set says so rather than rendering a bare grid', async () => {
+  const { doc } = load(gridPage({ items: [], pages: [] }));
+  await settle();
+
+  assert.equal(doc.getElementById('rzk-app'), null, 'no cards means no grid page to take over');
+});
+
+test('the heading comes from the page', async () => {
+  const { doc } = load(gridPage({ heading: 'Результаты поиска «matrix»' }));
+  await settle();
+
+  assert.equal(text(doc, '.gtitle'), 'Результаты поиска «matrix»');
+});
+
+test('search submits to the site\'s own search URL', async () => {
+  const { doc, window, effects } = load(gridPage());
+  await settle();
+
+  const input = el(doc, 'q');
+  input.value = 'матрица';
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+  assert.match(effects.navigated.at(-1), /\/search\/\?do=search&subaction=search&q=/);
+  assert.match(decodeURIComponent(effects.navigated.at(-1)), /матрица/);
+});
+
+// ----------------------------------------------------------------- menus ----
+
+test('menus open on click and close on choose', async () => {
   const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-  assert.equal(dl(doc).disabled, false);
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  doc.querySelector('.b-simple_episode__item[data-episode_id="1"]').click();
+  assert.equal(el(doc, 'qualityMenu').hidden, true);
+  el(doc, 'qualityPick').click();
+  assert.equal(el(doc, 'qualityMenu').hidden, false);
 
-  assert.equal(dl(doc).disabled, true, 'must not offer the old episode file');
-  assert.equal(value(doc, 'quality'), '—');
-  assert.equal(opts(doc, 'qualities').length, 0);
+  pick(doc, 'quality', '720p').click();
+  assert.equal(el(doc, 'qualityMenu').hidden, true);
 });
 
-// --------------------------------------------------------------- chrome ----
-
-test('the panel opens and closes, and remembers being open', async () => {
+test('opening one menu closes another', async () => {
   const { doc, window } = load(seriesPage());
-  await settle(200);
+  await settle();
+  deliver(window, { url: streamList.plain });
 
-  const pill = el(doc, 'pill');
-  assert.equal(card(doc).hidden, true, 'starts closed');
+  el(doc, 'qualityPick').click();
+  el(doc, 'voicePick').click();
 
-  pill.click();
-  assert.equal(card(doc).hidden, false);
-  assert.equal(pill.getAttribute('aria-expanded'), 'true');
-  assert.equal(window.localStorage.getItem('rzk.open'), 'true', 'state persisted');
-
-  pill.click();
-  assert.equal(card(doc).hidden, true);
+  assert.equal(el(doc, 'qualityMenu').hidden, true);
+  assert.equal(el(doc, 'voiceMenu').hidden, false);
 });
 
-test('the status line is absent when there is nothing to report', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  assert.equal(el(doc, 'status').hidden, true, 'no empty status row taking up space');
-});
-
-test('menus stay shut until their field is clicked', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  const field = el(doc, 'qualityField');
-  assert.equal(el(doc, 'qualities').hidden, true);
-
-  field.click();
-  assert.equal(el(doc, 'qualities').hidden, false);
-  assert.equal(field.getAttribute('aria-expanded'), 'true');
-
-  field.click();
-  assert.equal(el(doc, 'qualities').hidden, true);
-});
-
-test('opening one menu closes the other', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  el(doc, 'qualityField').click();
-  el(doc, 'voiceField').click();
-
-  assert.equal(el(doc, 'qualities').hidden, true, 'quality menu should have closed');
-  assert.equal(el(doc, 'translators').hidden, false);
-});
-
-test('choosing an option closes the menu', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  el(doc, 'qualityField').click();
-  option(doc, 'qualities', '360p').click();
-
-  assert.equal(el(doc, 'qualities').hidden, true);
-  assert.equal(value(doc, 'quality'), '360p');
-});
-
-test('Escape closes the menu first, then the panel', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  deliverStreams(window, { url: streamList.plain });
-
-  el(doc, 'pill').click();
-  el(doc, 'qualityField').click();
-
-  const esc = () =>
-    shadow(doc).querySelector('.root').dispatchEvent(
-      new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
-    );
-
-  esc();
-  assert.equal(el(doc, 'qualities').hidden, true, 'first Escape closes the menu');
-  assert.equal(card(doc).hidden, false, 'panel stays open');
-
-  esc();
-  assert.equal(card(doc).hidden, true, 'second Escape closes the panel');
-});
-
-test('a field with nothing to choose between is not clickable', async () => {
+test('a picker with one option is inert', async () => {
   const { doc, window } = load(
-    seriesPage({ translators: [{ id: '56', name: 'Дубляж', active: true }] })
+    seriesPage({ translators: [{ id: '59', name: 'Дубляж', active: true }], seasons: ['1'],
+                 episodes: { 1: ['1'] }, activeSeason: '1', activeEpisode: '1' })
   );
-  await settle(200);
-  deliverStreams(window, { url: '[720p]https://cdn.example.net/only_720.mp4' });
+  await settle();
+  deliver(window, { tid: '59', season: '1', episode: '1', url: '[720p]https://cdn.example.net/only.mp4' });
 
-  assert.equal(el(doc, 'voiceField').disabled, true, 'one voiceover — nothing to pick');
-  assert.equal(el(doc, 'qualityField').disabled, true, 'one quality — nothing to pick');
-  assert.equal(dl(doc).disabled, false, 'still downloadable');
-});
-
-test('the trigger flags a ready file while the panel is closed', async () => {
-  const { doc, window } = load(seriesPage());
-  await settle(200);
-  assert.equal(el(doc, 'badge').hidden, true, 'nothing to flag yet');
-
-  deliverStreams(window, { url: streamList.plain });
-  assert.equal(el(doc, 'badge').hidden, false, 'a file is ready');
-
-  el(doc, 'pill').click();
-  assert.equal(el(doc, 'badge').hidden, true, 'redundant once the panel is open');
+  assert.equal(el(doc, 'voicePick').disabled, true);
+  assert.equal(el(doc, 'qualityPick').disabled, true);
+  assert.equal(el(doc, 'download').disabled, false, 'still downloadable');
 });

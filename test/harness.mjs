@@ -21,20 +21,10 @@ function makeXHRClass(sent) {
       this.responseText = '';
       this.status = 200;
     }
-    open(method, url) {
-      this.method = method;
-      this.url = url;
-    }
-    setRequestHeader(k, v) {
-      this._headers[k] = v;
-    }
-    addEventListener(type, fn) {
-      (this._listeners[type] ||= []).push(fn);
-    }
-    send(body) {
-      this.body = body;
-      sent.push(this);
-    }
+    open(method, url) { this.method = method; this.url = url; }
+    setRequestHeader(k, v) { this._headers[k] = v; }
+    addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
+    send(body) { this.body = body; sent.push(this); }
     /** Test-side helper: deliver a response and fire the load handlers. */
     respond(payload) {
       this.responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -45,66 +35,82 @@ function makeXHRClass(sent) {
 }
 
 /**
- * Boot the userscript against a fixture document.
- * Returns the window plus the side effects the script produces, since almost
- * everything it does is either a DOM mutation or a GM_* call.
+ * jsdom has no media stack: play/pause throw "not implemented" and duration is
+ * always NaN. Stub just enough that the player's own logic runs, and record
+ * what it asked the element to do.
  */
-export function load(html, { url = 'https://hdrezka.me/films/example.html', gmDownload = false } = {}) {
+function stubMedia(window, effects) {
+  const proto = window.HTMLMediaElement.prototype;
+  proto.play = function () { this.paused = false; this.dispatchEvent(new window.Event('play')); return Promise.resolve(); };
+  proto.pause = function () { this.paused = true; this.dispatchEvent(new window.Event('pause')); };
+  proto.load = function () {};
+  Object.defineProperty(proto, 'paused', { writable: true, configurable: true, value: true });
+  Object.defineProperty(proto, 'buffered', { configurable: true, get() { return { length: 0 }; } });
+  Object.defineProperty(proto, 'src', {
+    configurable: true,
+    get() { return this.getAttribute('src') || ''; },
+    set(v) { this.setAttribute('src', v); effects.videoSrc.push(v); }
+  });
+}
+
+export function load(html, { url = 'https://rezka-ua.tv/films/drama/1-x.html', gmDownload = false } = {}) {
   const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
 
   const effects = {
-    clipboard: [],
-    styles: [],
-    anchorClicks: [],
-    downloads: [],
-    xhrs: [],
-    errors: [],
+    clipboard: [], anchorClicks: [], downloads: [], xhrs: [], videoSrc: [], navigated: []
   };
 
-  // Anchors are how the script triggers both downloads and the leech handoff.
-  // Recording clicks keeps jsdom from trying to navigate and lets us assert on
-  // the href/download pair, which is the actual contract with the browser.
   window.HTMLAnchorElement.prototype.click = function () {
     effects.anchorClicks.push({
       href: this.getAttribute('href'),
-      download: this.getAttribute('download'),
+      download: this.getAttribute('download')
     });
+  };
+  stubMedia(window, effects);
+
+  // jsdom won't let window.location be replaced, and real navigation throws.
+  // Shadow the binding for the script instead — the file itself is untouched.
+  window.__rzkLocation = {
+    pathname: new URL(url).pathname,
+    get href() { return url; },
+    set href(v) { effects.navigated.push(v); }
   };
 
   const XHR = makeXHRClass(effects.xhrs);
   window.XMLHttpRequest = XHR;
-  window.GM_addStyle = (css) => effects.styles.push(css);
   window.GM_setClipboard = (text) => effects.clipboard.push(text);
-  // Not every manager grants GM_download, so the script has to cope either way.
   if (gmDownload) window.GM_download = (opts) => effects.downloads.push(opts);
-  window.addEventListener('error', (e) => effects.errors.push(e.error || e.message));
 
   const ctx = dom.getInternalVMContext();
-  vm.runInContext(readFileSync(SCRIPT, 'utf8'), ctx, { filename: 'rezka-downloader.user.js' });
+  const source = readFileSync(SCRIPT, 'utf8');
+  vm.runInContext(
+    `(function (location) {\n${source}\n})(globalThis.__rzkLocation);`,
+    ctx,
+    { filename: 'rezka-downloader.user.js' }
+  );
 
   return { dom, window, doc: window.document, effects, XHR };
 }
 
-/** Let the script's setTimeout chains (100ms / 1000ms / 1500ms) settle. */
-export const settle = (ms = 1600) => new Promise((r) => setTimeout(r, ms));
+/** Let the script's timers settle. */
+export const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
 /** The CDN payload shape the site returns from /ajax/get_cdn_series/. */
 export const cdnPayload = (url) => ({ success: true, url, message: '' });
 
-/** The UI lives in an open shadow root; everything is queried through it. */
-export const shadow = (doc) => doc.getElementById('rzk-root')?.shadowRoot ?? null;
+// ---- queries into the app's shadow root ----
 
+export const shadow = (doc) => doc.getElementById('rzk-app')?.shadowRoot ?? null;
 export const el = (doc, name) => shadow(doc)?.querySelector(`[data-el="${name}"]`) ?? null;
+export const all = (doc, sel) => [...(shadow(doc)?.querySelectorAll(sel) ?? [])];
+export const text = (doc, sel) => shadow(doc)?.querySelector(sel)?.textContent.replace(/\s+/g, ' ').trim() ?? null;
 
-/** Options inside one of the two dropdown menus ("qualities" | "translators"). */
-export const opts = (doc, menu) =>
-  [...(shadow(doc)?.querySelectorAll(`[data-el="${menu}"] .opt`) ?? [])];
+/** Value shown on a closed picker row ("voice" | "season" | "quality"). */
+export const value = (doc, pick) => el(doc, `${pick}Value`)?.textContent.trim() ?? null;
 
-export const optLabels = (doc, menu) => opts(doc, menu).map((o) => o.textContent.trim());
+export const options = (doc, menu) => all(doc, `[data-el="${menu}Menu"] .opt`);
+export const optionLabels = (doc, menu) => options(doc, menu).map((o) => o.textContent.trim());
 
-export const chosen = (doc, menu) =>
-  opts(doc, menu).find((o) => o.getAttribute('aria-selected') === 'true') ?? null;
-
-/** The value shown on a closed field row. */
-export const value = (doc, field) => el(doc, `${field}Value`)?.textContent.trim() ?? null;
+/** Whether the original page is currently hidden by the takeover. */
+export const takenOver = (doc) => doc.documentElement.getAttribute('data-rzk') === 'on';
