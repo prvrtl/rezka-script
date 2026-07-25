@@ -15,8 +15,10 @@ Updates come from this repo, so the extension will pick up new versions on its o
 
 Open any movie or episode page. A "Rezka DL" pill appears in the bottom-right corner; click it to expand the panel.
 
+Press `Esc` to close it.
+
 - **Voiceover chips** — switch translation. Selecting one clicks the site's own tab, so the player follows along and the stream list refreshes.
-- **Quality chips** — every free quality, best first. The top one is preselected; pick a smaller file if you'd rather. Your choice carries over when you switch voiceover, as long as that track offers it.
+- **Quality chips** — every free quality, best first. The top one is preselected; pick a smaller file if you'd rather. Your choice is remembered and reused on later releases that offer it.
 - **Download** — saves the file with a sensible name: `Title.Year.S01E02.1080p.mp4`, built from the original-language title and the active season/episode tabs.
 - **Leech** — rewrites the URL to a `secureleech://` handler and copies the filename to your clipboard, since Leech doesn't accept a name over the URL scheme.
 - **Copy** — puts the raw stream URL on the clipboard.
@@ -26,6 +28,24 @@ On load the script prefers a Ukrainian voiceover when one exists, and moves off 
 ## Supported sites
 
 `rezka-ua.tv`, `hdrezka.me`, `hdrezka.co`, `rezka.ag`, `hello-rezka.tv`, plus a wildcard `@include` for other mirrors that keep `rezka` in the hostname.
+
+## How it's put together
+
+Four layers, in one file:
+
+| layer | job |
+| --- | --- |
+| `site` | every selector that knows HDrezka's markup — the only part a site redesign touches |
+| `api` | the `/ajax/get_cdn_series/` call, parsing the quality list, ranking labels |
+| `store` | what's loaded and what's selected, with subscribers re-rendering on change |
+| `ui` | the panel, rendered into a shadow root |
+
+[`API.md`](API.md) documents the endpoint, the quality-list format and the DOM contracts the
+`site` layer depends on, including what's assumed but unverified.
+
+The UI renders into an open shadow root, so the site's stylesheet can't reach the panel and
+the panel's rules can't restyle the site — the previous version styled every `<hr>` on the
+page, not just its own.
 
 ## Notes
 
@@ -40,7 +60,7 @@ Previously published on [Greasy Fork](https://greasyfork.org/en/scripts/580540-r
 
 ## Development
 
-The tests run the real `.user.js` inside a jsdom document shaped like an HDrezka page, with the `GM_*` API and `XMLHttpRequest` stubbed, so they exercise the shipped file rather than a copy of its logic.
+The tests run the real `.user.js` inside a jsdom document shaped like an HDrezka page, with the `GM_*` API and `XMLHttpRequest` stubbed, so they exercise the shipped file rather than a copy of its logic. Assertions go through the shadow root, the same way a user sees it.
 
 ```
 npm install

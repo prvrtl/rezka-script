@@ -92,5 +92,12 @@ export const settle = (ms = 1600) => new Promise((r) => setTimeout(r, ms));
 /** The CDN payload shape the site returns from /ajax/get_cdn_series/. */
 export const cdnPayload = (url) => ({ success: true, url, message: '' });
 
-export const $ = (doc, sel) => doc.querySelector(sel);
-export const text = (doc, sel) => doc.querySelector(sel)?.textContent?.trim() ?? null;
+/** The UI lives in an open shadow root; everything is queried through it. */
+export const shadow = (doc) => doc.getElementById('rzk-root')?.shadowRoot ?? null;
+
+export const el = (doc, name) => shadow(doc)?.querySelector(`[data-el="${name}"]`) ?? null;
+
+export const chips = (doc, name) =>
+  [...(shadow(doc)?.querySelectorAll(`[data-el="${name}"] .chip`) ?? [])];
+
+export const chipLabels = (doc, name) => chips(doc, name).map((c) => c.textContent.trim());
