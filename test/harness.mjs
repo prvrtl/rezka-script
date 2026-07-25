@@ -13,7 +13,7 @@ const SCRIPT = join(here, '..', 'rezka-downloader.user.js');
  * installed on the window before the script is evaluated for the intercept
  * path to be exercised the same way it is in a browser.
  */
-function makeXHRClass(sent) {
+function makeXHRClass(sent, auto) {
   return class FakeXHR {
     constructor() {
       this._listeners = { load: [] };
@@ -24,7 +24,12 @@ function makeXHRClass(sent) {
     open(method, url) { this.method = method; this.url = url; }
     setRequestHeader(k, v) { this._headers[k] = v; }
     addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
-    send(body) { this.body = body; sent.push(this); }
+    send(body) {
+      this.body = body;
+      sent.push(this);
+      // Optionally answer on its own, so a queue can run without hand-feeding.
+      if (auto) queueMicrotask(() => { try { this.respond(auto(body)); } catch (e) {} });
+    }
     /** Test-side helper: deliver a response and fire the load handlers. */
     respond(payload) {
       this.responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -71,16 +76,23 @@ function stubMedia(window, effects) {
 
 export function load(html, {
   url = 'https://rezka-ua.tv/films/drama/1-x.html',
+  /** true, or (opts, nth) => 'ok' | 'fail' — omit for no GM_download at all. */
   gmDownload = false,
   /** Byte size the fake GM_xmlhttpRequest reports; omit for no such API. */
   fileSize = null,
+  /** true, or (body) => payload — auto-answer /ajax/get_cdn_series/ requests. */
+  autoStream = false,
+  /** Values seeded into localStorage before the script is evaluated. */
+  storage = null,
 } = {}) {
   const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
 
   const effects = {
     clipboard: [], anchorClicks: [], downloads: [], xhrs: [],
-    videoSrc: [], navigated: [], headRequests: []
+    videoSrc: [], navigated: [], headRequests: [], aborted: [],
+    /** Download names in the order they completed. */
+    finished: []
   };
 
   window.HTMLAnchorElement.prototype.click = function () {
@@ -99,15 +111,47 @@ export function load(html, {
     set href(v) { effects.navigated.push(v); }
   };
 
-  const XHR = makeXHRClass(effects.xhrs);
+  const streamFor = autoStream === true
+    ? (body) => {
+        const p = new URLSearchParams(body);
+        const s = p.get('season') || '0';
+        const e = p.get('episode') || '0';
+        return cdnPayload(`[720p]https://cdn.example.net/s${s}e${e}.mp4,[360p]https://cdn.example.net/s${s}e${e}_lo.mp4`);
+      }
+    : autoStream || null;
+
+  const XHR = makeXHRClass(effects.xhrs, streamFor);
   window.XMLHttpRequest = XHR;
   window.GM_setClipboard = (text) => effects.clipboard.push(text);
-  if (gmDownload) window.GM_download = (opts) => effects.downloads.push(opts);
+
+  if (gmDownload) {
+    const verdict = typeof gmDownload === 'function' ? gmDownload : () => 'ok';
+    window.GM_download = (opts) => {
+      effects.downloads.push(opts);
+      const nth = effects.downloads.length;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        if (verdict(opts, nth) === 'fail') { opts.onerror?.({ error: 'not_whitelisted' }); return; }
+        opts.onprogress?.({ loaded: 512, total: 1024 });
+        opts.onprogress?.({ loaded: 1024, total: 1024 });
+        effects.finished.push(opts.name);
+        opts.onload?.();
+      });
+      return { abort() { cancelled = true; effects.aborted.push(opts.name); opts.onerror?.({ error: 'aborted' }); } };
+    };
+  }
   if (fileSize !== null) {
     window.GM_xmlhttpRequest = (o) => {
       effects.headRequests.push(o.url);
       queueMicrotask(() => o.onload({ responseHeaders: `Content-Length: ${fileSize}\r\n` }));
     };
+  }
+
+  if (storage) {
+    for (const [k, v] of Object.entries(storage)) {
+      window.localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+    }
   }
 
   // Deterministic clock so buffer-rate maths doesn't depend on wall time.

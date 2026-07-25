@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.1
+// @version        3.2
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -28,7 +28,7 @@
 (function () {
   'use strict';
 
-  const PREF = { quality: 'rzk.quality', skin: 'rzk.skin', pos: 'rzk.pos' };
+  const PREF = { quality: 'rzk.quality', pos: 'rzk.pos', batch: 'rzk.batch' };
 
   const prefs = {
     get(key, fallback) {
@@ -382,13 +382,13 @@
     return '';
   }
 
-  function filename(quality) {
+  function filename(quality, season = store.season, episode = store.episode) {
     const base = (site.original() || site.title())
       .replace(/[<>:"/\\|?*]/g, '')
       .replace(/\s+/g, '.')
       .replace(/\.+/g, '.');
-    const se = store.season && store.episode
-      ? `S${String(store.season).padStart(2, '0')}E${String(store.episode).padStart(2, '0')}`
+    const se = season && episode
+      ? `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
       : '';
     return [base, site.year(), se, quality].filter(Boolean).join('.') + '.mp4';
   }
@@ -537,6 +537,234 @@
     }
   };
 
+  // ---------------------------------------------------------------- batch ----
+  // Download a whole show from a chosen point, one episode at a time.
+  //
+  // Two things make this reliable rather than a for-loop:
+  //
+  //   * stream URLs are per-episode and carry an expiry stamp, so each one is
+  //     resolved immediately before its own download, never queued up front;
+  //   * one download at a time, with retries, and a failure never stops the
+  //     queue — it is recorded and the run moves on.
+  //
+  // Progress is written to storage after every episode, so closing the tab
+  // mid-run loses at most the episode that was in flight.
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  const batch = {
+    items: [],
+    index: 0,
+    state: 'idle',        // idle | running | paused | done
+    progress: null,       // { loaded, total } for the episode in flight
+    handle: null,         // whatever GM_download handed back, if anything
+    cancelled: false,
+
+    // Sequencing needs a completion signal, and only GM_download gives one.
+    available() { return typeof GM_download === 'function'; },
+
+    /** Every episode at or after (season, episode), in broadcast order. */
+    plan(season, episode) {
+      const map = site.episodes();
+      const order = site.seasons().map(s => s.id);
+      const seasons = order.length ? order : Object.keys(map).sort((a, b) => a - b);
+      const out = [];
+      let started = false;
+      for (const s of seasons) {
+        for (const ep of (map[s] || [])) {
+          if (!started) {
+            if (String(s) === String(season) && String(ep.id) === String(episode)) started = true;
+            else continue;
+          }
+          out.push({ season: String(s), episode: String(ep.id), status: 'pending', error: '' });
+        }
+      }
+      return out;
+    },
+
+    counts() {
+      const c = { done: 0, failed: 0, pending: 0, total: batch.items.length };
+      for (const i of batch.items) {
+        if (i.status === 'done') c.done++;
+        else if (i.status === 'failed') c.failed++;
+        else c.pending++;
+      }
+      return c;
+    },
+
+    start(season, episode) {
+      batch.items = batch.plan(season, episode);
+      batch.index = 0;
+      if (!batch.items.length) return;
+      batch.resume();
+    },
+
+    resume() {
+      if (batch.state === 'running') return;
+      batch.cancelled = false;
+      batch.state = 'running';
+      batchView.update();
+      batch.step();
+    },
+
+    pause() {
+      // Let the episode in flight finish; just stop taking new ones.
+      if (batch.state === 'running') batch.state = 'paused';
+      batchView.update();
+    },
+
+    stop() {
+      batch.cancelled = true;
+      batch.state = 'idle';
+      batch.abort();
+      batch.items = [];
+      batch.index = 0;
+      batch.progress = null;
+      prefs.set(PREF.batch, null);
+      batchView.update();
+    },
+
+    skip() {
+      batch.cancelled = true;      // makes the in-flight download reject
+      batch.abort();
+    },
+
+    abort() {
+      try { batch.handle?.abort?.(); } catch (e) {}
+      batch.handle = null;
+    },
+
+    async step() {
+      if (batch.state !== 'running') return;
+      const item = batch.items[batch.index];
+      if (!item) { batch.finish(); return; }
+
+      item.status = 'active';
+      item.error = '';
+      batch.progress = null;
+      batchView.update();
+
+      try {
+        const list = await batch.resolve(item);
+        const stream = batch.choose(list);
+        if (!stream) throw new Error('нет бесплатного качества');
+        await batch.fetchFile(item, stream);
+        item.status = 'done';
+      } catch (e) {
+        item.status = batch.cancelled && !e.__real ? 'skipped' : 'failed';
+        item.error = e.message || 'ошибка';
+      }
+
+      batch.cancelled = false;
+      batch.progress = null;
+      batch.index++;
+      batch.save();
+      batchView.update();
+
+      if (batch.state === 'running') {
+        await wait(700);            // don't hammer their endpoint
+        batch.step();
+      }
+    },
+
+    /** Fresh URL per episode — they expire, so this cannot be done in advance. */
+    async resolve(item, attempts = 3) {
+      let last;
+      for (let i = 0; i < attempts; i++) {
+        if (batch.cancelled) throw new Error('пропущено');
+        try {
+          return await api.request({
+            id: site.id(),
+            translatorId: store.translator,
+            season: item.season,
+            episode: item.episode,
+            series: true
+          });
+        } catch (e) {
+          last = e;
+          await wait(700 * (i + 1));
+        }
+      }
+      throw last;
+    },
+
+    /** Honour the chosen quality, falling back to the best free one. */
+    choose(list) {
+      const free = (list || []).filter(s => !s.premium);
+      if (!free.length) return null;
+      return free.find(s => s.label === store.quality) || free[0];
+    },
+
+    async fetchFile(item, stream, attempts = 2) {
+      let last;
+      for (let i = 0; i < attempts; i++) {
+        if (batch.cancelled) throw new Error('пропущено');
+        try { return await batch.once(item, stream); }
+        catch (e) { last = e; if (batch.cancelled) throw e; await wait(900); }
+      }
+      throw last;
+    },
+
+    once(item, stream) {
+      return new Promise((resolve, reject) => {
+        const name = filename(stream.label, item.season, item.episode);
+        let settled = false;
+        const finish = fn => (arg) => { if (settled) return; settled = true; batch.handle = null; fn(arg); };
+        const fail = finish(err => {
+          const e = new Error(err?.error || err?.message || 'загрузка не удалась');
+          e.__real = true;
+          reject(e);
+        });
+        try {
+          batch.handle = GM_download({
+            url: stream.url,
+            name,
+            saveAs: false,
+            onprogress: p => { batch.progress = p; batchView.tickProgress(); },
+            onload: finish(() => resolve()),
+            onerror: fail,
+            ontimeout: fail
+          });
+        } catch (e) { fail(e); }
+      });
+    },
+
+    finish() {
+      batch.state = 'done';
+      batch.progress = null;
+      batch.save();
+      batchView.update();
+    },
+
+    retryFailed() {
+      for (const i of batch.items) if (i.status === 'failed' || i.status === 'skipped') i.status = 'pending';
+      batch.index = batch.items.findIndex(i => i.status === 'pending');
+      if (batch.index < 0) return;
+      batch.resume();
+    },
+
+    save() {
+      prefs.set(PREF.batch, {
+        id: site.id(),
+        translator: store.translator,
+        index: batch.index,
+        state: batch.state === 'running' ? 'paused' : batch.state,
+        items: batch.items.map(i => ({ ...i, status: i.status === 'active' ? 'pending' : i.status }))
+      });
+    },
+
+    /** Pick a run back up after a reload, but never resume without a click. */
+    restore() {
+      const saved = prefs.get(PREF.batch, null);
+      if (!saved || saved.id !== site.id() || !Array.isArray(saved.items)) return false;
+      if (!saved.items.some(i => i.status === 'pending')) return false;
+      batch.items = saved.items;
+      batch.index = Math.max(0, saved.index || 0);
+      batch.state = 'paused';
+      return true;
+    }
+  };
+
   const fmtSize = b => !b ? '' : b >= 1e9 ? `${(b / 1e9).toFixed(2)} ГБ` : `${Math.round(b / 1e6)} МБ`;
   const fmtRate = bps => bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Мбит/с` : `${Math.round(bps / 1e3)} Кбит/с`;
 
@@ -675,6 +903,27 @@
     .pulse.ok { background: #f5c451; }
     .pulse.poor { background: #ff6b6b; }
     .pulse.idle { background: var(--faint); }
+
+    /* ---- batch download ---- */
+    .batch { margin-top: 16px; padding: 14px; border: 1px solid var(--line);
+             border-radius: 12px; background: var(--surface); }
+    .batch[hidden] { display: none; }
+    .batch h2 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+    .batch .line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .batch select { padding: 7px 9px; border-radius: 8px; background: var(--raised);
+                    color: var(--ink); border: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+    .batch .hint { font-size: 12.5px; color: var(--dim); padding-top: 8px; }
+    .batch .hint.warn { color: var(--bad); }
+    .bar { position: relative; height: 4px; border-radius: 4px; background: rgba(255,255,255,.1);
+           margin: 10px 0 8px; overflow: hidden; }
+    .bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px;
+             transition: width .2s ease; }
+    .batch .now { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+    .batch .now b { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .batch .now span { color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .batch .tally { display: flex; gap: 12px; font-size: 12.5px; color: var(--dim);
+                    padding-top: 2px; font-variant-numeric: tabular-nums; }
+    .batch .tally .bad { color: var(--bad); }
 
     /* ---- episodes ---- */
     .eps { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 7px; padding: 16px 0 0; }
@@ -1034,6 +1283,7 @@
           <span data-el="speedText"></span>
         </div>
         <div class="eps" data-el="eps"></div>
+        <section class="batch" data-el="batch" hidden></section>
 
         <section class="meta">
           <div>${site.poster() ? `<img class="poster" src="${esc(site.poster())}" alt="">` : ''}</div>
@@ -1091,6 +1341,8 @@
       ui.el.note.hidden = !note;
       ui.el.note.textContent = note ? note.text : '';
       ui.el.note.classList.toggle('error', note?.kind === 'error');
+
+      batchView.update();
     },
 
     fillMenus() {
@@ -1146,6 +1398,131 @@
       ui.el.download?.addEventListener('click', () => actions.run('download'));
       ui.el.copy?.addEventListener('click', () => actions.run('copy'));
       ui.el.leech?.addEventListener('click', () => actions.run('leech'));
+    }
+  };
+
+  const plural = (n, forms) => {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (a > 10 && a < 20) return forms[2];
+    if (b > 1 && b < 5) return forms[1];
+    if (b === 1) return forms[0];
+    return forms[2];
+  };
+
+  const EPISODES = ['серия', 'серии', 'серий'];
+  const tag = i => `S${String(i.season).padStart(2, '0')}E${String(i.episode).padStart(2, '0')}`;
+
+  const batchView = {
+    from: { season: null, episode: null },
+
+    start() {
+      const seasons = site.seasons();
+      const season = batchView.from.season || store.season || seasons[0]?.id;
+      const eps = site.episodes()[season] || [];
+      const episode = eps.some(e => e.id === batchView.from.episode)
+        ? batchView.from.episode
+        : (season === store.season ? store.episode : eps[0]?.id);
+      return { season, episode: episode || eps[0]?.id };
+    },
+
+    update() {
+      const box = ui.el.batch;
+      if (!box) return;
+      if (!site.isSeries()) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = batchView.markup();
+      ui.cache();
+      batchView.bind();
+    },
+
+    markup() {
+      if (!batch.available()) {
+        return `<h2>Скачать по порядку</h2>
+          <p class="hint warn">Недоступно: менеджер скриптов не даёт GM_download. Без него
+          не узнать, когда серия догрузилась, а значит нельзя ставить их в очередь.
+          Работает в Tampermonkey.</p>`;
+      }
+
+      if (batch.state === 'idle') {
+        const seasons = site.seasons();
+        const sel = batchView.start();
+        const eps = site.episodes()[sel.season] || [];
+        const n = batch.plan(sel.season, sel.episode).length;
+        return `
+          <h2>Скачать по порядку</h2>
+          <div class="line">
+            <select data-el="bSeason" aria-label="Начиная с сезона">${seasons.map(s =>
+              `<option value="${esc(s.id)}"${s.id === sel.season ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}</select>
+            <select data-el="bEpisode" aria-label="Начиная с серии">${eps.map(e =>
+              `<option value="${esc(e.id)}"${e.id === sel.episode ? ' selected' : ''}>${esc(e.id)} серия</option>`).join('')}</select>
+            <button class="dl" data-el="bStart" type="button">${I.down} Начать</button>
+          </div>
+          <p class="hint">${n} ${plural(n, EPISODES)} · до конца сериала · ${esc(store.selected()?.label || 'лучшее доступное')}</p>`;
+      }
+
+      const c = batch.counts();
+      if (batch.state === 'done') {
+        const bad = c.failed;
+        return `
+          <h2>Скачивание завершено</h2>
+          <p class="hint">${c.done} из ${c.total}${bad ? ` · ${bad} не удалось` : ''}</p>
+          <div class="line">
+            ${bad ? `<button class="dl" data-el="bRetry" type="button">Повторить неудачные</button>` : ''}
+            <button class="quiet" data-el="bStop" type="button">Закрыть</button>
+          </div>`;
+      }
+
+      const item = batch.items[batch.index];
+      const pct = batch.progress?.total
+        ? Math.round((batch.progress.loaded / batch.progress.total) * 100) : null;
+      const paused = batch.state === 'paused';
+
+      return `
+        <h2>${paused ? 'Пауза' : 'Скачивается'}</h2>
+        <div class="now">
+          <b>${item ? tag(item) : '—'}</b>
+          <span data-el="bPct">${pct === null ? (paused ? 'остановлено' : 'подготовка…') : pct + '%'}</span>
+        </div>
+        <div class="bar"><i data-el="bBar" style="width:${pct || 0}%"></i></div>
+        <div class="tally">
+          <span>${c.done} / ${c.total}</span>
+          ${c.failed ? `<span class="bad">не удалось ${c.failed}</span>` : ''}
+        </div>
+        <div class="line" style="padding-top:10px">
+          ${paused
+            ? `<button class="dl" data-el="bResume" type="button">Продолжить</button>`
+            : `<button class="quiet" data-el="bPause" type="button">Пауза</button>
+               <button class="quiet" data-el="bSkip" type="button">Пропустить</button>`}
+          <button class="quiet" data-el="bStop" type="button">Стоп</button>
+        </div>`;
+    },
+
+    bind() {
+      ui.el.bSeason?.addEventListener('change', e => {
+        batchView.from = { season: e.target.value, episode: null };
+        batchView.update();
+      });
+      ui.el.bEpisode?.addEventListener('change', e => {
+        batchView.from = { season: ui.el.bSeason?.value || store.season, episode: e.target.value };
+        batchView.update();
+      });
+      ui.el.bStart?.addEventListener('click', () => {
+        const sel = batchView.start();
+        batch.start(sel.season, sel.episode);
+      });
+      ui.el.bPause?.addEventListener('click', () => batch.pause());
+      ui.el.bResume?.addEventListener('click', () => batch.resume());
+      ui.el.bSkip?.addEventListener('click', () => batch.skip());
+      ui.el.bStop?.addEventListener('click', () => batch.stop());
+      ui.el.bRetry?.addEventListener('click', () => batch.retryFailed());
+    },
+
+    /** Cheap path: move the bar without rebuilding the panel. */
+    tickProgress() {
+      if (!batch.progress?.total) return;
+      const pct = Math.round((batch.progress.loaded / batch.progress.total) * 100);
+      if (ui.el.bBar) ui.el.bBar.style.width = pct + '%';
+      if (ui.el.bPct) ui.el.bPct.textContent = pct + '%';
     }
   };
 
@@ -1361,7 +1738,18 @@
     watchView.update();
     actions.need();
 
-    addEventListener('beforeunload', player.remember);
+    // An interrupted run comes back paused, never mid-download: resuming is
+    // always a deliberate click.
+    if (batch.restore()) batchView.update();
+
+    addEventListener('beforeunload', e => {
+      player.remember();
+      if (batch.state !== 'running') return;
+      batch.save();
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    });
   }
 
   // One global rule, and it only bites once our own UI is up.

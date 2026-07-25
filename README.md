@@ -54,6 +54,37 @@ Two class-name dependencies genuinely remain, because no attribute equivalent ex
 `active` to mark the current tab, and a class containing `prem` to mark a PRO-only
 voiceover. If those change, the PRO filter is what degrades.
 
+## Downloading a whole show
+
+On a series page, a panel under the episodes queues everything from a chosen point to
+the end of the show:
+
+```
+Скачать по порядку
+С сезона [2 ⌄]  серии [5 ⌄]        [ ↓ Начать ]
+34 серии · до конца сериала · 1080p
+```
+
+It runs one episode at a time, rolls into the next season automatically, and shows the
+current episode with a progress bar, a `12 / 34` tally and a failure count. **Пауза**
+stops after the episode in flight, **Пропустить** abandons the current one and moves on,
+**Стоп** clears the queue.
+
+What makes it reliable rather than a for-loop:
+
+- **URLs are resolved per episode, immediately before its own download.** Stream links
+  carry an expiry stamp, so resolving the whole show up front would hand you a queue of
+  links that die halfway through.
+- **A failure never stops the run.** The stream request is retried three times and the
+  download twice; if it still fails, the episode is recorded and the queue moves on. A
+  **Повторить неудачные** button re-queues just those at the end.
+- **Progress is saved after every episode.** Closing the tab loses at most the episode in
+  flight, and the run comes back *paused* — it never resumes without a click.
+- **Strictly one at a time**, with a short gap between episodes.
+
+This needs `GM_download`, because sequencing requires knowing when a file finished.
+Without it the panel says so rather than misbehaving quietly.
+
 ## Stream speed
 
 While something is playing, a readout under the player shows how much cushion there
@@ -101,6 +132,7 @@ On load it prefers a Ukrainian voiceover when one exists, and moves off a PRO-on
 | `store` | what's loaded and selected, keyed by voice + season + episode |
 | `player` | the `<video>` element and its chrome |
 | `speed` | buffer cushion, throughput and file sizes |
+| `batch` | the whole-show download queue |
 | `views` | watch and grid, rendered into a shadow root |
 
 [`API.md`](API.md) documents the endpoint, the quality-list grammar and the DOM contracts,

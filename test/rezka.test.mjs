@@ -646,3 +646,227 @@ test('a picker with one option is inert', async () => {
   assert.equal(el(doc, 'qualityPick').disabled, true);
   assert.equal(el(doc, 'download').disabled, false, 'still downloadable');
 });
+
+// -------------------------------------------------- batch: whole-show run ----
+// Two seasons, so a run has to roll over from the end of one into the next.
+
+const SHOW = () => seriesPage({
+  seasons: ['1', '2'],
+  episodes: { 1: ['1', '2'], 2: ['1', '2'] },
+  activeSeason: '1',
+  activeEpisode: '1',
+});
+
+const batchBox = (doc) => el(doc, 'batch');
+
+/** Poll until a condition holds; batch work is spread over real timers. */
+async function until(fn, timeout = 9000) {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    if (fn()) return true;
+    await settle(25);
+  }
+  return false;
+}
+
+const startFrom = (doc, season, episode) => {
+  el(doc, 'bSeason').value = season;
+  el(doc, 'bSeason').dispatchEvent(new doc.defaultView.Event('change'));
+  el(doc, 'bEpisode').value = episode;
+  el(doc, 'bEpisode').dispatchEvent(new doc.defaultView.Event('change'));
+  el(doc, 'bStart').click();
+};
+
+test('the batch panel is offered on a show and withheld from a film', async () => {
+  const show = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+  assert.equal(batchBox(show.doc).hidden, false);
+
+  const film = load(filmPage(), { gmDownload: true });
+  await settle();
+  assert.equal(batchBox(film.doc).hidden, true, 'no queue panel on a film');
+});
+
+test('the queue runs to the end of the show, crossing into the next season', async () => {
+  const { doc, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+
+  startFrom(doc, '1', '2');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  assert.deepEqual(effects.finished, [
+    'Great.Teacher.1998.S01E02.720p.mp4',
+    'Great.Teacher.1998.S02E01.720p.mp4',
+    'Great.Teacher.1998.S02E02.720p.mp4',
+  ], 'from the chosen episode onward, in broadcast order');
+});
+
+test('the starting point is respected', async () => {
+  const { doc, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+
+  startFrom(doc, '2', '2');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  assert.deepEqual(effects.finished, ['Great.Teacher.1998.S02E02.720p.mp4'], 'only the last one');
+});
+
+test('each episode gets its own freshly resolved URL', async () => {
+  const { doc, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+  const before = effects.xhrs.length;
+
+  startFrom(doc, '2', '1');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  const asked = effects.xhrs.slice(before).map((x) => x.body);
+  assert.equal(asked.length, 2, 'one request per episode, none batched up front');
+  assert.match(asked[0], /season=2&episode=1/);
+  assert.match(asked[1], /season=2&episode=2/);
+  assert.deepEqual(effects.downloads.map((d) => d.url), [
+    'https://cdn.example.net/s2e1.mp4',
+    'https://cdn.example.net/s2e2.mp4',
+  ], 'each download uses that episode’s own URL');
+});
+
+test('only one download is ever in flight', async () => {
+  let peak = 0, live = 0;
+  const { doc } = load(SHOW(), {
+    url: SERIES_URL,
+    autoStream: true,
+    gmDownload: (opts) => {
+      live++; peak = Math.max(peak, live);
+      queueMicrotask(() => { live--; });
+      return 'ok';
+    },
+  });
+  await settle();
+
+  startFrom(doc, '1', '1');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  assert.equal(peak, 1, 'strictly sequential');
+});
+
+test('a failing episode is retried, recorded, and does not stop the rest', async () => {
+  const { doc, effects } = load(SHOW(), {
+    url: SERIES_URL,
+    autoStream: true,
+    gmDownload: (opts) => (/S02E01/.test(opts.name) ? 'fail' : 'ok'),
+  });
+  await settle();
+
+  startFrom(doc, '1', '2');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  const attempts = effects.downloads.filter((d) => /S02E01/.test(d.name)).length;
+  assert.equal(attempts, 2, 'retried once before giving up');
+  assert.deepEqual(effects.finished, [
+    'Great.Teacher.1998.S01E02.720p.mp4',
+    'Great.Teacher.1998.S02E02.720p.mp4',
+  ], 'the queue carried on past the failure');
+  assert.match(batchBox(doc).textContent, /1 не удалось/);
+});
+
+test('failed episodes can be retried afterwards', async () => {
+  let failing = true;
+  const { doc, effects } = load(SHOW(), {
+    url: SERIES_URL,
+    autoStream: true,
+    gmDownload: (opts) => (failing && /S01E01/.test(opts.name) ? 'fail' : 'ok'),
+  });
+  await settle();
+
+  startFrom(doc, '1', '1');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+  assert.match(batchBox(doc).textContent, /не удалось/);
+
+  failing = false;
+  el(doc, 'bRetry').click();
+  await until(() => /завершено/.test(batchBox(doc).textContent) && !/не удалось/.test(batchBox(doc).textContent));
+
+  assert.equal(effects.finished.includes('Great.Teacher.1998.S01E01.720p.mp4'), true);
+});
+
+test('pausing stops the queue and resuming carries on', async () => {
+  const { doc, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+
+  startFrom(doc, '1', '1');
+  await until(() => effects.finished.length >= 1);
+  el(doc, 'bPause').click();
+
+  await until(() => /Пауза/.test(batchBox(doc).textContent));
+  const atPause = effects.finished.length;
+  await settle(400);
+  assert.equal(effects.finished.length, atPause, 'nothing new starts while paused');
+
+  el(doc, 'bResume').click();
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+  assert.equal(effects.finished.length, 4, 'all four eventually');
+});
+
+test('stopping clears the queue and the saved progress', async () => {
+  const { doc, window, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+
+  startFrom(doc, '1', '1');
+  await until(() => effects.finished.length >= 1);
+  el(doc, 'bStop').click();
+
+  const done = effects.finished.length;
+  await settle(400);
+  assert.equal(effects.finished.length, done, 'no further downloads');
+  assert.match(batchBox(doc).textContent, /Скачать по порядку/, 'back to the start screen');
+  assert.equal(window.localStorage.getItem('rzk.batch'), 'null', 'saved run cleared');
+});
+
+test('an interrupted run comes back paused and never restarts by itself', async () => {
+  const saved = {
+    id: '91371',
+    translator: '57',
+    index: 1,
+    state: 'paused',
+    items: [
+      { season: '1', episode: '1', status: 'done', error: '' },
+      { season: '1', episode: '2', status: 'pending', error: '' },
+      { season: '2', episode: '1', status: 'pending', error: '' },
+    ],
+  };
+  const { doc, effects } = load(SHOW(), {
+    url: SERIES_URL, gmDownload: true, autoStream: true, storage: { 'rzk.batch': saved },
+  });
+  await settle(300);
+
+  assert.equal(effects.downloads.length, 0, 'nothing downloads without a click');
+  assert.match(batchBox(doc).textContent, /Пауза/, 'restored in the paused state');
+  assert.match(batchBox(doc).textContent, /1 \/ 3/, 'the finished episode is remembered');
+
+  el(doc, 'bResume').click();
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+  assert.deepEqual(effects.finished, [
+    'Great.Teacher.1998.S01E02.720p.mp4',
+    'Great.Teacher.1998.S02E01.720p.mp4',
+  ], 'picks up exactly where it stopped');
+});
+
+test('without GM_download the queue is refused with a reason', async () => {
+  const { doc } = load(SHOW(), { url: SERIES_URL, autoStream: true });
+  await settle();
+
+  assert.match(batchBox(doc).textContent, /Недоступно/);
+  assert.match(batchBox(doc).textContent, /GM_download/);
+  assert.equal(el(doc, 'bStart'), null, 'no start button to press');
+});
+
+test('the queue honours the chosen quality', async () => {
+  const { doc, effects } = load(SHOW(), { url: SERIES_URL, gmDownload: true, autoStream: true });
+  await settle();
+
+  pick(doc, 'quality', '360p')?.click();
+  startFrom(doc, '2', '2');
+  await until(() => /завершено/.test(batchBox(doc).textContent));
+
+  assert.equal(effects.downloads.at(-1).url, 'https://cdn.example.net/s2e2_lo.mp4');
+  assert.match(effects.downloads.at(-1).name, /360p\.mp4$/);
+});

@@ -21,6 +21,7 @@ const CHALLENGE = /не бот|checking your browser|just a moment|attention req
 const DEFAULTS = [
   ['film', 'https://rezka-ua.tv/films/drama/55330-russkaya-lolita-2007.html'],
   ['series', 'https://rezka-ua.tv/series/comedy/91371-krutoy-uchitel-onidzuka-1998.html'],
+  ['series-multi', 'https://rezka-ua.tv/series/comedy/1733-druzya-1994-latest.html'],
   ['catalog', 'https://rezka-ua.tv/films/'],
   ['search', 'https://rezka-ua.tv/search/?do=search&subaction=search&q=matrix'],
 ];
@@ -90,6 +91,11 @@ const probe = () => {
     pager: s.querySelectorAll('.pager a').length,
     heading: txt('.gtitle'),
     veilVisible: q('[data-el="veil"]') ? !q('[data-el="veil"]').hidden : null,
+    batchShown: q('[data-el="batch"]') ? !q('[data-el="batch"]').hidden : false,
+    batchSeasons: [...(q('[data-el="bSeason"]')?.options || [])].map(o => o.value),
+    batchEpisodes: [...(q('[data-el="bEpisode"]')?.options || [])].map(o => o.value),
+    batchHint: txt('.batch .hint'),
+    batchCanStart: Boolean(q('[data-el="bStart"]')),
   };
 };
 
@@ -167,8 +173,15 @@ for (const [name, url] of targets) {
     // an ordinary http(s) target and not a manifest.
     check(/^https?:\/\//.test(r.videoSrc) && !/\.m3u8/.test(r.videoSrc),
       'player got a direct file', r.videoSrc.slice(0, 62) || `note: ${r.note}`);
-    if (name === 'series') {
+    if (name.startsWith('series')) {
       check(r.episodes > 0, 'episodes listed', String(r.episodes));
+      // The queue is only planned here, never started: running it would pull
+      // gigabytes onto the disk of whoever is verifying.
+      check(r.batchShown, 'batch panel offered');
+      check(r.batchSeasons.length > 0, 'seasons selectable', r.batchSeasons.join(','));
+      check(r.batchEpisodes.length > 0, 'episodes selectable', String(r.batchEpisodes.length));
+      check(r.batchCanStart, 'queue can be started');
+      check(/\d+\s+сери/.test(r.batchHint), 'queue size computed', r.batchHint.slice(0, 50));
     }
     if (r.note) console.log(`      note: ${r.note}`);
 
