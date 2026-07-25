@@ -82,6 +82,8 @@ export function load(html, {
   fileSize = null,
   /** true, or (body) => payload — auto-answer /ajax/get_cdn_series/ requests. */
   autoStream = false,
+  /** WebVTT body returned for subtitle GETs; enables GM_xmlhttpRequest on its own. */
+  vtt = null,
   /** Values seeded into localStorage before the script is evaluated. */
   storage = null,
   /** true, or (text) => translated — installs a fake on-device Translator. */
@@ -92,7 +94,7 @@ export function load(html, {
 
   const effects = {
     clipboard: [], anchorClicks: [], downloads: [], xhrs: [],
-    videoSrc: [], navigated: [], headRequests: [], aborted: [],
+    videoSrc: [], navigated: [], headRequests: [], getRequests: [], aborted: [],
     /** Download names in the order they completed. */
     finished: []
   };
@@ -143,10 +145,16 @@ export function load(html, {
       return { abort() { cancelled = true; effects.aborted.push(opts.name); opts.onerror?.({ error: 'aborted' }); } };
     };
   }
-  if (fileSize !== null) {
+  if (fileSize !== null || vtt !== null) {
     window.GM_xmlhttpRequest = (o) => {
-      effects.headRequests.push(o.url);
-      queueMicrotask(() => o.onload({ responseHeaders: `Content-Length: ${fileSize}\r\n` }));
+      if ((o.method || 'GET').toUpperCase() === 'HEAD') {
+        effects.headRequests.push(o.url);
+        queueMicrotask(() => o.onload({ responseHeaders: `Content-Length: ${fileSize ?? 0}\r\n` }));
+        return;
+      }
+      effects.getRequests.push(o.url);
+      const body = vtt ?? 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n';
+      queueMicrotask(() => o.onload({ responseText: body, responseHeaders: '' }));
     };
   }
 
@@ -156,6 +164,14 @@ export function load(html, {
       availability: async () => 'available',
       create: async () => ({ translate: async (t) => render(t) }),
     };
+  }
+
+  // jsdom implements Blob but not URL.createObjectURL, so the blob path the
+  // real browser takes would otherwise be untestable.
+  if (typeof window.URL.createObjectURL !== 'function') {
+    let n = 0;
+    window.URL.createObjectURL = () => `blob:rzk/${++n}`;
+    window.URL.revokeObjectURL = () => {};
   }
 
   if (storage) {
@@ -184,7 +200,7 @@ export function load(html, {
 export const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
 /** The CDN payload shape the site returns from /ajax/get_cdn_series/. */
-export const cdnPayload = (url) => ({ success: true, url, message: '' });
+export const cdnPayload = (url, extra = {}) => ({ success: true, url, message: '', ...extra });
 
 // ---- queries into the app's shadow root ----
 

@@ -7,11 +7,11 @@ import {
 import { filmPage, seriesPage, gridPage, streamList, SCRAMBLED } from './fixtures.mjs';
 
 /** Emulate the site's own AJAX call so the script's XHR intercept picks it up. */
-function deliver(window, { tid = '57', season = '2', episode = '1', url }) {
+function deliver(window, { tid = '57', season = '2', episode = '1', url, extra = {} }) {
   const xhr = new window.XMLHttpRequest();
   xhr.open('POST', '/ajax/get_cdn_series/');
   xhr.send(`id=91371&translator_id=${tid}&action=get_stream&season=${season}&episode=${episode}`);
-  xhr.respond(cdnPayload(url));
+  xhr.respond(cdnPayload(url, extra));
   return xhr;
 }
 
@@ -1080,4 +1080,142 @@ test('a page in our sections that turns out to be unrenderable is uncovered agai
 
   assert.equal(doc.documentElement.hasAttribute('data-rzk'), false, 'the site must come back');
   assert.equal(doc.getElementById('rzk-app'), null);
+});
+
+
+// --------------------------------------------------- native player + subs ----
+
+const SUBS = {
+  subtitle: '[Русский]https://cdn.example.net/ru.vtt,[English]https://cdn.example.net/en.vtt',
+  subtitle_lns: { 'откл.': '', 'Русский': 'ru', English: 'en' },
+  subtitle_def: 'en',
+};
+
+const tracks = (doc) => [...el(doc, 'video').querySelectorAll('track')];
+
+test('the player offers a switch to the browser\'s own controls', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  const video = el(doc, 'video');
+  assert.equal(video.controls, false, 'starts on the custom chrome');
+  assert.equal(el(doc, 'mode').textContent.trim(), 'Native player');
+
+  el(doc, 'mode').click();
+
+  assert.equal(video.controls, true, 'browser controls handed the frame');
+  assert.equal(el(doc, 'mode').textContent.trim(), 'Custom player', 'offers the way back');
+  assert.ok(shadow(doc).querySelector('.screen.native'), 'custom chrome stood down');
+  assert.equal(window.localStorage.getItem('rzk.native'), 'true', 'remembered');
+});
+
+test('the chosen player survives a reload', async () => {
+  const { doc, window } = load(seriesPage(), {
+    url: SERIES_URL, storage: { 'rzk.native': true },
+  });
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  assert.equal(el(doc, 'video').controls, true);
+  assert.equal(el(doc, 'mode').textContent.trim(), 'Custom player');
+});
+
+test('subtitles from the response become real <track> elements', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n' });
+  await settle();
+  deliver(window, { url: streamList.plain, extra: SUBS });
+  await settle(20);
+
+  const t = tracks(doc);
+  assert.deepEqual(t.map((x) => x.getAttribute('label')), ['Русский', 'English']);
+  assert.deepEqual(t.map((x) => x.getAttribute('srclang')), ['ru', 'en']);
+  assert.equal(t.every((x) => x.getAttribute('kind') === 'subtitles'), true);
+});
+
+test('the language the site marks as default is the one switched on', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n' });
+  await settle();
+  deliver(window, { url: streamList.plain, extra: SUBS });
+  await settle(20);
+
+  const on = tracks(doc).filter((x) => x.hasAttribute('default')).map((x) => x.getAttribute('srclang'));
+  assert.deepEqual(on, ['en'], 'subtitle_def picks the starting track');
+});
+
+test('subtitle files are fetched around CORS rather than linked directly', async () => {
+  const { doc, window, effects } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n' });
+  await settle();
+  deliver(window, { url: streamList.plain, extra: SUBS });
+  await settle(20);
+
+  assert.deepEqual(effects.getRequests, [
+    'https://cdn.example.net/ru.vtt',
+    'https://cdn.example.net/en.vtt',
+  ], 'pulled through GM_xmlhttpRequest');
+  assert.equal(tracks(doc).every((x) => /^blob:/.test(x.getAttribute('src'))), true, 'served as blobs');
+});
+
+test('a track with no subtitles gets none, not an empty menu', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n' });
+  await settle();
+  // The real API sends false rather than omitting the fields.
+  deliver(window, { url: streamList.plain, extra: { subtitle: false, subtitle_lns: false, subtitle_def: false } });
+  await settle(20);
+
+  assert.equal(tracks(doc).length, 0);
+});
+
+test('switching episode replaces the subtitles rather than stacking them', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n' });
+  await settle();
+  deliver(window, { episode: '1', url: streamList.plain, extra: SUBS });
+  await settle(20);
+  assert.equal(tracks(doc).length, 2);
+
+  all(doc, '.ep')[1].click();
+  await settle();
+  deliver(window, { episode: '2', url: streamList.plain, extra: SUBS });
+  await settle(20);
+
+  assert.equal(tracks(doc).length, 2, 'replaced, not appended');
+});
+
+test('coming back from the native player restores the poster overlay', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+  deliver(window, { url: streamList.plain });
+  assert.equal(el(doc, 'veil').hidden, false, 'shown before playback starts');
+
+  el(doc, 'mode').click();
+  assert.equal(el(doc, 'veil').hidden, true, 'the browser draws its own');
+
+  el(doc, 'mode').click();
+  assert.equal(el(doc, 'veil').hidden, false, 'and ours comes back');
+});
+
+test('the overlay stays gone if playback already started', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL });
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  el(doc, 'bigplay').click();
+  assert.equal(el(doc, 'veil').hidden, true);
+
+  el(doc, 'mode').click();
+  el(doc, 'mode').click();
+  assert.equal(el(doc, 'veil').hidden, true, 'no overlay over a playing film');
+});
+
+test('subtitles are not attached twice when the stream is re-read', async () => {
+  const { doc, window } = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n' });
+  await settle();
+
+  // Two responses back to back: the first run's attach must not survive.
+  deliver(window, { url: streamList.plain, extra: SUBS });
+  deliver(window, { url: streamList.plain, extra: SUBS });
+  await settle(30);
+
+  assert.deepEqual(tracks(doc).map((t) => t.getAttribute('srclang')), ['ru', 'en'],
+    'one track per language, however many times it reloads');
 });

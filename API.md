@@ -68,14 +68,47 @@ issuing a second identical request.
 Films have no translator or episode tabs at all; the script falls back to the info table
 for a display name and scrapes the translator id out of the inline script.
 
+## Subtitles
+
+The same response carries subtitle tracks, in the same bracketed grammar as the quality
+list. They are WebVTT, so `<track>` plays them directly.
+
+```json
+{
+  "subtitle": "[Русский]https://…/x.vtt,[English]https://…/y.vtt",
+  "subtitle_lns": { "откл.": "", "Русский": "ru", "English": "en" },
+  "subtitle_def": "ru"
+}
+```
+
+- `subtitle_lns` maps each label to a language code; the "off" entry maps to an empty
+  string and is the player's own menu item, not a track.
+- `subtitle_def` is the code that should start switched on.
+- All three fields come back as `false`, not absent, when a track has no subtitles.
+
+Most voiceovers carry none. The "Оригинал (+субтитры)" track is where they live; one title
+checked returned four (`ru`, `ru-2`, `ua`, `en`).
+
+The `.vtt` files are on another origin and the CDN does not send CORS headers, so a plain
+`<track src>` is refused by the browser. Fetching the text through `GM_xmlhttpRequest` and
+attaching a `blob:` URL works.
+
+## Other fields on the same response
+
+| field | meaning |
+| --- | --- |
+| `premium_content` | `0` / `1` — whether the release is PRO-gated |
+| `quality` | the quality the site would have picked by default |
+| `thumbnails` | path to a seek-preview tile track, e.g. `/ajax/get_cdn_tiles/1/1848417/?t=…` |
+
+`thumbnails` is not used yet; it is the source for hover previews on the scrub bar.
+
 ## Unverified
 
-The live site currently sits behind a bot check, so the following could not be confirmed
-first-hand and are deliberately not relied on:
+The live site sits behind a bot check, so this could not be confirmed first-hand:
 
 - whether `url` is ever returned obfuscated (historically it has been, base64 chunks joined
   by `//_//` with junk padding, requiring a decode pass before parsing)
-- subtitle fields (`subtitle`, `subtitle_lns`, `subtitle_def`) on the same response
-- `/ajax/get_episodes/` for building a full season/episode map without clicking tabs
+- `/ajax/get_episodes/` for building a season/episode map without reading the page
 
-If any of these matter, confirm them against a real session before coding to them.
+If either matters, confirm it against a real session before coding to it.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.5
+// @version        3.6
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -29,7 +29,7 @@
 (function () {
   'use strict';
 
-  const PREF = { quality: 'rzk.quality', pos: 'rzk.pos', batch: 'rzk.batch' };
+  const PREF = { quality: 'rzk.quality', pos: 'rzk.pos', batch: 'rzk.batch', native: 'rzk.native' };
 
   const prefs = {
     get(key, fallback) {
@@ -322,11 +322,41 @@
           try { data = JSON.parse(xhr.responseText); }
           catch (e) { reject(new Error('Unreadable response')); return; }
           if (!data.success || !data.url) { reject(new Error(data.message || 'No stream returned')); return; }
-          resolve(api.parse(data.url));
+          resolve(api.read(data));
         };
         xhr.onerror = () => reject(new Error('Request failed'));
         xhr.send(body.toString());
       });
+    },
+
+    /** Everything the endpoint returns, not just the qualities. */
+    read(data) {
+      return { list: api.parse(data.url), subs: api.subtitles(data) };
+    },
+
+    /**
+     * Subtitles use the same bracketed grammar as the quality list:
+     *   subtitle:     "[Русский]https://…/x.vtt,[English]https://…/y.vtt"
+     *   subtitle_lns: { "откл.": "", "Русский": "ru" }   label -> language code
+     *   subtitle_def: "ru"                               which one starts on
+     * They are WebVTT, so <track> plays them with no help from us.
+     */
+    subtitles(data) {
+      const raw = data && data.subtitle;
+      if (!raw || typeof raw !== 'string') return [];
+      const codes = (data.subtitle_lns && typeof data.subtitle_lns === 'object') ? data.subtitle_lns : {};
+      const preferred = data.subtitle_def || '';
+      const out = [];
+      for (const part of raw.split(/,(?=\[)/)) {
+        const m = part.match(/^\[([^\]]+)\](.+)$/s);
+        if (!m) continue;
+        const label = m[1].replace(/<[^>]+>/g, '').trim();
+        const url = m[2].trim();
+        if (!url || !label) continue;
+        const lang = codes[label] || '';
+        out.push({ label, url, lang, on: Boolean(lang) && lang === preferred });
+      }
+      return out;
     },
 
     // "[360p]a.mp4 or b.mp4,[<span class=pjs-prem-quality>1080p</span>]c.mp4"
@@ -587,6 +617,8 @@
 
   const store = {
     streams: {},            // "translator:season:episode" -> parsed list
+    subs: {},               // same key -> subtitle tracks
+    native: prefs.get(PREF.native, false),
     translator: null,
     season: null,
     episode: null,
@@ -603,6 +635,7 @@
     },
 
     current() { return store.streams[store.key()] || null; },
+    captions() { return store.subs[store.key()] || []; },
     free() { return (store.current() || []).filter(s => !s.premium); },
 
     selected() {
@@ -835,8 +868,8 @@
       batchView.update();
 
       try {
-        const list = await batch.resolve(item);
-        const stream = batch.choose(list);
+        const res = await batch.resolve(item);
+        const stream = batch.choose(res.list);
         if (!stream) throw new Error('no free quality');
         await batch.fetchFile(item, stream);
         item.status = 'done';
@@ -1028,6 +1061,7 @@
                     align-content: center; gap: 10px;
                     background: #000; text-align: center; padding: 24px; }
     .screen .veil[hidden] { display: none; }
+    .screen.native .chrome, .screen.native .veil { display: none !important; }
     .screen .veil .msg:empty { display: none; }
     .screen .veil .msg { color: var(--dim); font-size: 13px; max-width: 46ch; }
     .poster-blur { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
@@ -1346,8 +1380,38 @@
   // without an MSE layer, so those fall back to the site's own player rather
   // than showing a dead frame.
 
+  const vttCache = new Map();
+
+  /**
+   * <track> obeys CORS and these .vtt files are on another origin, so a direct
+   * src often loads nothing at all. Pulling the text through GM_xmlhttpRequest
+   * and handing the element a blob avoids the whole problem; without that API
+   * we still try the plain URL, which works when the CDN happens to allow it.
+   */
+  function subtitleSrc(url) {
+    if (vttCache.has(url)) return Promise.resolve(vttCache.get(url));
+    if (typeof GM_xmlhttpRequest !== 'function') return Promise.resolve(url);
+    return new Promise(resolve => {
+      let settled = false;
+      const done = value => { if (settled) return; settled = true; vttCache.set(url, value); resolve(value); };
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET', url, timeout: 12000,
+          onload: r => {
+            const text = r.responseText || '';
+            if (!/-->/.test(text)) { done(url); return; }
+            try { done(URL.createObjectURL(new Blob([text], { type: 'text/vtt' }))); }
+            catch (e) { done(url); }
+          },
+          onerror: () => done(url),
+          ontimeout: () => done(url)
+        });
+      } catch (e) { done(url); }
+    });
+  }
+
   const player = {
-    video: null, screen: null, ready: false,
+    video: null, screen: null, ready: false, capGen: 0,
 
     markup(poster) {
       return `
@@ -1380,11 +1444,12 @@
       const v = ui.el.video, screen = ui.el.screen;
       if (!v) return;
       player.video = v; player.screen = screen;
+      player.setMode(store.native);
 
       const toggle = () => { if (v.paused) v.play?.().catch(() => {}); else v.pause?.(); };
       ui.el.toggle?.addEventListener('click', toggle);
       ui.el.bigplay?.addEventListener('click', toggle);
-      v.addEventListener('click', toggle);
+      v.addEventListener('click', () => { if (!store.native) toggle(); });
 
       v.addEventListener('play', () => {
         screen.classList.remove('paused');
@@ -1438,6 +1503,49 @@
       });
     },
 
+    /**
+      * Native mode hands the frame to the browser's own controls, which bring
+      * subtitles, playback speed, picture-in-picture, download and casting —
+      * a far richer menu than is worth rebuilding by hand.
+      */
+    setMode(native) {
+      const v = player.video, sc = player.screen;
+      if (!v || !sc) return;
+      v.controls = Boolean(native);
+      sc.classList.toggle('native', Boolean(native));
+      if (!ui.el.veil) return;
+      // Coming back from native mode has to restore the poster overlay, but
+      // only when it was earned: before playback starts, or to carry a message.
+      const message = ui.el.veilMsg?.textContent || '';
+      ui.el.veil.hidden = native ? true : !(message || (v.paused && !v.currentTime));
+    },
+
+    /**
+     * Rebuild the <track> list for whatever the current stream offers.
+     *
+     * Clearing is synchronous but attaching is not, so two calls that overlap
+     * would both append and the same language would appear twice. Each run
+     * takes a ticket and stale ones drop their result.
+     */
+    captions(subs) {
+      const v = player.video;
+      if (!v) return;
+      const ticket = ++player.capGen;
+      for (const old of [...v.querySelectorAll('track')]) old.remove();
+      for (const sub of subs || []) {
+        subtitleSrc(sub.url).then(src => {
+          if (player.video !== v || player.capGen !== ticket) return;
+          const track = document.createElement('track');
+          track.kind = 'subtitles';
+          track.label = sub.label;
+          if (sub.lang) track.srclang = sub.lang;
+          if (sub.on) track.default = true;
+          track.src = src;
+          v.appendChild(track);
+        });
+      }
+    },
+
     tick() {
       const v = player.video;
       if (!v || !ui.el.fill) return;
@@ -1464,6 +1572,9 @@
       v.src = stream.url;
       if (at > 30) v.currentTime = at;
       player.ready = true;
+
+      player.captions(store.captions());
+      player.setMode(store.native);
 
       speed.reset();
       speed.probe(stream.url).then(bytes => {
@@ -1563,6 +1674,9 @@
       }
       html += ui.picker('quality', 'Quality', picked ? picked.label : '—', free.length < 2);
       html += '<span class="grow"></span>';
+      html += `<button class="quiet" data-el="mode" type="button" title="${
+        store.native ? 'Back to the built-in controls' : 'Use the browser\u2019s own player: subtitles, speed, picture-in-picture'
+      }">${store.native ? 'Custom player' : 'Native player'}</button>`;
       html += `<button class="dl" data-el="download" type="button" ${picked ? '' : 'disabled'}>${I.down} Download</button>`;
       html += `<button class="quiet" data-el="copy" type="button" ${picked ? '' : 'disabled'}>Copy link</button>`;
       html += `<button class="quiet" data-el="leech" type="button" ${picked ? '' : 'disabled'}>Leech</button>`;
@@ -1656,6 +1770,7 @@
         const b = e.target.closest('[data-ep]');
         if (b) actions.setEpisode(b.dataset.ep);
       });
+      ui.el.mode?.addEventListener('click', () => actions.setMode(!store.native));
       ui.el.download?.addEventListener('click', () => actions.run('download'));
       ui.el.copy?.addEventListener('click', () => actions.run('copy'));
       ui.el.leech?.addEventListener('click', () => actions.run('leech'));
@@ -1816,9 +1931,13 @@
 
     posKey() { return `${site.id()}:${store.season || ''}:${store.episode || ''}`; },
 
-    ingest(key, list) {
+    ingest(key, list, subs = []) {
       clearTimeout(watchdog);
-      store.patch({ streams: { ...store.streams, [key]: list }, status: null });
+      store.patch({
+        streams: { ...store.streams, [key]: list },
+        subs: { ...store.subs, [key]: subs },
+        status: null
+      });
       const pick = store.selected();
       if (pick && key === store.key()) player.load(pick);
     },
@@ -1842,7 +1961,7 @@
       const key = store.key();
       api.request({
         id, translatorId: t, season: store.season, episode: store.episode, series: site.isSeries()
-      }).then(list => actions.ingest(key, list), err => actions.fail(err.message));
+      }).then(res => actions.ingest(key, res.list, res.subs), err => actions.fail(err.message));
     },
 
     arm() {
@@ -1878,6 +1997,13 @@
       const eps = site.episodes()[store.season] || [];
       const i = eps.findIndex(e => e.id === store.episode);
       if (i >= 0 && i + 1 < eps.length) actions.setEpisode(eps[i + 1].id);
+    },
+
+    setMode(native) {
+      store.native = Boolean(native);
+      prefs.set(PREF.native, store.native);
+      player.setMode(store.native);
+      store.emit();
     },
 
     setQuality(label) {
@@ -1949,8 +2075,10 @@
           const p = typeof body === 'string' ? new URLSearchParams(body) : null;
           const tid = p?.get('translator_id') || store.translator;
           if (!tid) return;
-          actions.ingest(store.key(tid, p?.get('season') || store.season, p?.get('episode') || store.episode),
-            api.parse(data.url));
+          const read = api.read(data);
+          actions.ingest(
+            store.key(tid, p?.get('season') || store.season, p?.get('episode') || store.episode),
+            read.list, read.subs);
         });
       }
       return send.apply(this, arguments);

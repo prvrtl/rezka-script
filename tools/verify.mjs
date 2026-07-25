@@ -28,7 +28,23 @@ const DEFAULTS = [
 
 /** The GM_* surface Tampermonkey would provide. */
 const SHIMS = `
+  // Start every page from a known state: the profile is persistent, so a
+  // preference left behind by an earlier run would silently skew the next one.
+  try {
+    ['rzk.native', 'rzk.quality', 'rzk.batch', 'rzk.pos']
+      .forEach((k) => localStorage.removeItem('gm:' + k));
+  } catch (e) {}
   window.__rzkDownloads = [];
+  // Tampermonkey's GM_xmlhttpRequest is not bound by CORS because it runs
+  // privileged. Emulate that with a bridge to Node, or the subtitle and
+  // file-size paths simply cannot be exercised here.
+  window.GM_xmlhttpRequest = (o) => {
+    const method = (o.method || 'GET').toUpperCase();
+    window.__rzkBridge({ url: o.url, method }).then(
+      (r) => o.onload && o.onload({ responseText: r.text, responseHeaders: r.headers }),
+      () => o.onerror && o.onerror({ error: 'bridge failed' })
+    );
+  };
   window.GM_setClipboard = (t) => { window.__rzkClip = t; };
   window.GM_download = (o) => { window.__rzkDownloads.push(o); };
   window.GM_getValue = (k, d) => { try { const v = localStorage.getItem('gm:' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
@@ -108,6 +124,10 @@ const probe = () => {
     batchEpisodes: [...(q('[data-el="bEpisode"]')?.options || [])].map(o => o.value),
     batchHint: txt('.batch .hint'),
     batchCanStart: Boolean(q('[data-el="bStart"]')),
+    modeLabel: q('[data-el="mode"]')?.textContent.trim() || '',
+    nativeControls: Boolean(video?.controls),
+    trackCount: video ? video.querySelectorAll('track').length : -1,
+    trackLabels: video ? [...video.querySelectorAll('track')].map(t => t.label) : [],
     barText: txt('.bar'),
     // Only the labels the script owns. Values come from the site and may
     // legitimately contain proper nouns like "СТС" that must not be translated.
@@ -126,9 +146,15 @@ mkdirSync(SHOTS, { recursive: true });
 const context = await chromium.launchPersistentContext(PROFILE, {
   headless: false, viewport: { width: 1440, height: 900 }, locale: 'uk-UA'
 });
+await context.exposeFunction('__rzkBridge', async ({ url, method }) => {
+  const res = await fetch(url, { method });
+  const len = res.headers.get('content-length');
+  return {
+    headers: len ? `Content-Length: ${len}\r\n` : '',
+    text: method === 'HEAD' ? '' : await res.text(),
+  };
+});
 await context.addInitScript({ content: SHIMS + '\n' + script });
-
-const page = context.pages()[0] || await context.newPage();
 
 // The site pulls in ad and tracker hosts that frequently fail to resolve. That
 // is their problem, not the script's — only real exceptions count.
@@ -136,26 +162,35 @@ const page = context.pages()[0] || await context.newPage();
 // it uses XHR and GM_xmlhttpRequest — so a fetch failure is never ours.
 const NOISE = /ERR_NAME_NOT_RESOLVED|ERR_BLOCKED|ERR_CONNECTION|Failed to load resource|ERR_INTERNET_DISCONNECTED|net::ERR|blocked by CORS policy|Access-Control-Allow-Origin|Failed to fetch/i;
 const errors = [];
-page.on('pageerror', e => {
-  const m = String(e.message || e);
-  if (!NOISE.test(m)) errors.push('exception: ' + m);
-});
-page.on('console', m => {
-  if (m.type() !== 'error') return;
-  const t = m.text();
-  if (!NOISE.test(t)) errors.push(t.slice(0, 160));
-});
+function watchPage(page) {
+  page.on('pageerror', e => {
+    const m = String(e.message || e);
+    if (!NOISE.test(m)) errors.push('exception: ' + m);
+  });
+  page.on('console', m => {
+    if (m.type() !== 'error') return;
+    const t = m.text();
+    if (!NOISE.test(t)) errors.push(t.slice(0, 160));
+  });
+}
 
 for (const [name, url] of targets) {
   console.log(`\n▸ ${name}  ${url}`);
   errors.length = 0;
+  const page = await context.newPage();
+  watchPage(page);
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   } catch (e) {
     check(false, 'page loaded', e.message.split('\n')[0]);
+    await page.close();
     continue;
   }
-  if (!(await settled(page)) && !(await waitForHuman(page))) { check(false, 'page loaded'); continue; }
+  if (!(await settled(page)) && !(await waitForHuman(page))) {
+    check(false, 'page loaded');
+    await page.close();
+    continue;
+  }
 
   // Give the script's own fetch and the site's AJAX time to land.
   await page.waitForTimeout(6000);
@@ -175,6 +210,7 @@ for (const [name, url] of targets) {
     console.log('      diagnostics:', JSON.stringify(d));
     for (const e of errors.slice(0, 6)) console.log(`      error: ${e}`);
     if (!errors.length) console.log('      (no page errors captured)');
+    await page.close();
     continue;
   }
   check(r.takenOver, 'original page hidden');
@@ -310,8 +346,49 @@ for (const [name, url] of targets) {
     }
   }
 
+    // The switch to the browser's own controls, exercised for real.
+    if (r.modeLabel) {
+      const swapped = await page.evaluate(() => {
+        const s = document.getElementById('rzk-app').shadowRoot;
+        s.querySelector('[data-el="mode"]').click();
+        const v = s.querySelector('[data-el="video"]');
+        return {
+          controls: v.controls,
+          native: Boolean(s.querySelector('.screen.native')),
+          label: s.querySelector('[data-el="mode"]').textContent.trim(),
+          tracks: [...v.querySelectorAll('track')].map(t => `${t.label}${t.default ? '*' : ''}`),
+        };
+      });
+      check(swapped.controls && swapped.native, 'switches to the native player', swapped.label);
+      console.log(`      subtitle tracks: ${swapped.tracks.length ? swapped.tracks.join(', ') : 'none on this voice'}`);
+
+      // Most voices carry no subtitles; the "Original (+subtitles)" track does.
+      // Switch to it so the subtitle path is exercised for real.
+      const subbed = await page.evaluate(() => {
+        const s = document.getElementById('rzk-app').shadowRoot;
+        const opt = [...s.querySelectorAll('[data-el="voiceMenu"] .opt')]
+          .find(o => /subtitle/i.test(o.textContent));
+        if (!opt) return null;
+        s.querySelector('[data-el="voicePick"]').click();
+        opt.click();
+        return opt.textContent.trim();
+      });
+      if (subbed) {
+        await page.waitForTimeout(6000);
+        const got = await page.evaluate(() => {
+          const v = document.getElementById('rzk-app').shadowRoot.querySelector('[data-el="video"]');
+          return [...v.querySelectorAll('track')].map(t =>
+            `${t.label}[${t.srclang || '?'}]${t.default ? '*' : ''}${/^blob:/.test(t.src) ? ' blob' : ''}`);
+        });
+        check(got.length > 0, 'subtitles attached on a track that has them', `${subbed} → ${got.join(', ') || 'none'}`);
+      }
+      await page.evaluate(() => document.getElementById('rzk-app').shadowRoot
+        .querySelector('[data-el="mode"]').click());
+    }
+
   check(errors.length === 0, 'no page errors', errors.slice(0, 2).join(' | '));
   await page.screenshot({ path: join(SHOTS, `verify-${name}.png`) });
+  await page.close();
 }
 
 await context.close();

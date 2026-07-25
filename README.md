@@ -149,6 +149,22 @@ Plays the direct MP4 with keyboard control (`space`/`k`, `←`/`→`, `f`, `m`),
 volume, fullscreen, and resume-where-you-left-off per episode. Finishing an episode rolls
 into the next one.
 
+**Native player.** A *Native player* button hands the frame to the browser's own controls,
+which bring a fuller menu than is worth rebuilding by hand: subtitles, playback speed,
+picture-in-picture, cast, download and fullscreen. The choice is remembered, and switching
+back restores the custom chrome.
+
+Subtitles are real, not decorative. The stream response carries WebVTT tracks, which become
+`<track>` elements the native menu lists by language. The files are cross-origin and the CDN
+sends no CORS headers, so they are fetched through `GM_xmlhttpRequest` and attached as blobs;
+without that API the plain URL is tried instead. Most voiceovers carry no subtitles at all —
+the "Original (+subtitles)" track is the one that does.
+
+**Audio tracks are a limitation worth knowing.** Each voiceover is a separate MP4 file
+rather than several audio tracks inside one container, so no player — native or otherwise —
+can list them in an audio menu. The *Voice* picker above the player is how you switch, and
+it reloads the file at the same position.
+
 Some releases are only served as HLS. A plain `<video>` can't play those without an MSE
 layer, so instead of showing a dead frame the script says so and hands playback back to
 the site's own player.
