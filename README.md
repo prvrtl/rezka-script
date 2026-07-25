@@ -32,6 +32,44 @@ takeover only fires on pages it can actually render, and never blanks a page it 
 The original DOM is only ever hidden, never deleted, so the site's own scripts keep running
 underneath and nothing is lost.
 
+## Reading the page
+
+The site is free to restyle whenever it likes, so the script reads whatever will
+outlive a redesign, in this order:
+
+| source | why it lasts |
+| --- | --- |
+| the URL | changing it breaks the site's own links |
+| `og:*` and `itemprop` | changing it breaks their search ranking |
+| `data-*` attributes | the site's own scripts depend on them |
+| CSS class names | free to change at any time — used only as a last resort |
+
+Every field walks that chain and takes the first answer. The content id comes out of
+the URL, the title and poster from microdata, the runtime from `og:duration`, and
+voiceovers, seasons and episodes from `data-translator_id` / `data-tab_id` /
+`data-episode_id`. A test renders the entire UI against a page with **every structural
+class renamed** and asserts it still works.
+
+Two class-name dependencies genuinely remain, because no attribute equivalent exists:
+`active` to mark the current tab, and a class containing `prem` to mark a PRO-only
+voiceover. If those change, the PRO filter is what degrades.
+
+## Stream speed
+
+While something is playing, a readout under the player shows how much cushion there
+is: seconds buffered ahead of the playhead, the fill rate, and — where the file size
+is reachable — throughput in Мбит/с and the total size.
+
+Buffer depth is what predicts a stall, not fill rate. CDNs commonly pace delivery to
+roughly real time once the player is comfortable, so a healthy stream sits at 1.0×
+indefinitely; judging on rate alone reports a false failure. A deep buffer is treated
+as sufficient on its own, and so is a fast fill.
+
+Opening the quality menu labels each option with its file size, so picking 720p over
+1080p is an informed choice. That costs one `HEAD` per quality, asked once and cached,
+and only when the menu is actually open. Sizes need `GM_xmlhttpRequest`; without it the
+cushion readout still works, just without absolute figures.
+
 ## The player
 
 Plays the direct MP4 with keyboard control (`space`/`k`, `←`/`→`, `f`, `m`), a buffer bar,
@@ -58,10 +96,11 @@ On load it prefers a Ukrainian voiceover when one exists, and moves off a PRO-on
 
 | layer | job |
 | --- | --- |
-| `site` | every selector that knows HDrezka's markup — the only part a redesign touches |
+| `site` | reads the page — URL, meta, microdata, `data-*`, then classes |
 | `api` | `/ajax/get_cdn_series/`, parsing the quality list, ranking labels |
 | `store` | what's loaded and selected, keyed by voice + season + episode |
 | `player` | the `<video>` element and its chrome |
+| `speed` | buffer cushion, throughput and file sizes |
 | `views` | watch and grid, rendered into a shadow root |
 
 [`API.md`](API.md) documents the endpoint, the quality-list grammar and the DOM contracts,
@@ -86,6 +125,13 @@ Fixtures in `test/fixtures.mjs` mirror the structure of real pages — the selec
 attributes and nesting are the site's; the text is invented, so none of their catalogue is
 checked in here.
 
+Verify against the live site — this loads the real `.user.js` into real pages and
+checks the UI mounts, streams resolve, and video actually plays:
+
+```
+node tools/verify.mjs
+```
+
 When the site changes shape, re-derive the contracts:
 
 ```
@@ -95,8 +141,8 @@ node tools/inspect.mjs
 
 `capture.mjs` drives a headed browser on a persistent profile and saves pages to
 `fixtures/raw/` (gitignored). If the site's bot check appears it stops and waits for you to
-clear it in the window — it does not try to solve or evade it. `inspect.mjs` then prints
-which selectors still match.
+clear it in the window — it does not try to solve or evade it, and neither does
+`verify.mjs`. `inspect.mjs` then prints which sources still answer.
 
 ## Notes
 

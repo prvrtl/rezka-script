@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.0
+// @version        3.1
 // @description    Replaces the HDrezka interface with a clean one: native player on direct links, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -17,6 +17,8 @@
 // @grant          GM_download
 // @grant          GM_getValue
 // @grant          GM_setValue
+// @grant          GM_xmlhttpRequest
+// @connect        *
 // @run-at         document-start
 // @homepageURL    https://github.com/prvrtl/rezka-script
 // @downloadURL    https://raw.githubusercontent.com/prvrtl/rezka-script/main/rezka-downloader.user.js
@@ -45,93 +47,167 @@
   };
 
   // ---------------------------------------------------------------- site ----
-  // Every selector that knows HDrezka's markup. Derived from real pages saved
-  // by tools/capture.mjs; run tools/inspect.mjs when something here stops
-  // matching. The original DOM is hidden, never removed — it stays the data
-  // source, and the site's own scripts keep working underneath.
+  // Everything that reads the page. Ordered by how long each source is likely
+  // to outlive a redesign:
+  //
+  //   1. the URL            — changing it breaks their own links
+  //   2. og:* / itemprop    — changing it breaks their search ranking
+  //   3. data-* attributes  — the site's own scripts depend on these
+  //   4. CSS class names    — free to change at any time
+  //
+  // Each accessor walks that order and takes the first answer, so a restyle
+  // costs nothing and only a genuine data change hurts. Run tools/inspect.mjs
+  // against a fresh capture to see which sources still answer.
+
+  const first = (...sources) => {
+    for (const s of sources) {
+      let v = null;
+      try { v = typeof s === 'function' ? s() : s; } catch (e) { v = null; }
+      if (v) return v;
+    }
+    return '';
+  };
+
+  const meta = name =>
+    document.querySelector(`meta[property="${name}"], meta[itemprop="${name}"], meta[name="${name}"]`)
+      ?.getAttribute('content')?.trim() || '';
+
+  const microText = name => {
+    const el = document.querySelector(`[itemprop="${name}"]`);
+    if (!el) return '';
+    return (el.getAttribute('content') || el.getAttribute('src') || el.textContent || '')
+      .replace(/\s+/g, ' ').trim();
+  };
+
+  const microAll = name => [...document.querySelectorAll(`[itemprop="${name}"]`)]
+    .map(el => (el.getAttribute('content') || el.textContent || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const path = () => { try { return location.pathname || ''; } catch (e) { return ''; } };
+
+  /** "/films/drama/55330-russkaya-lolita-2007.html" -> "55330" */
+  const ID_IN_PATH = /\/(\d+)-[^/]*\.html?$/;
 
   const site = {
     kind() {
-      if (document.getElementById('post_id')) return 'watch';
-      if (document.querySelector('.b-content__inline_item')) return 'grid';
+      // Watch pages also carry "related" cards, so card presence can never win
+      // over a watch signal — and a watch signal still has to be backed by
+      // actual content, or we would blank a page we cannot fill.
+      const looksWatch = /^video\./.test(meta('og:type'))
+        || ID_IN_PATH.test(path())
+        || Boolean(document.getElementById('post_id'));
+      if (looksWatch && site.id() && site.title()) return 'watch';
+      if (/^\/(search|page)\b/.test(path())) return 'grid';
+      if (document.querySelector('[data-url][data-id]')) return 'grid';
       return null;
     },
 
     id() {
-      return document.getElementById('post_id')?.value
-        || document.querySelector('[data-id]')?.dataset?.id
-        || null;
+      return first(
+        () => path().match(ID_IN_PATH)?.[1],
+        () => meta('og:url').match(ID_IN_PATH)?.[1],
+        () => document.getElementById('post_id')?.value,
+        () => document.querySelector('[data-id]')?.dataset?.id
+      ) || null;
     },
 
     title() {
-      return document.querySelector('.b-post__title h1, h1')?.textContent?.trim() || '';
+      return first(
+        () => microText('name'),
+        () => meta('og:title').replace(/\s*\(\d{4}\)\s*$/, ''),
+        () => document.querySelector('h1')?.textContent?.trim()
+      );
     },
 
-    // "Локализованное / Original" on some pages, absent entirely on others.
     original() {
-      const raw = document.querySelector('.b-post__origtitle')?.textContent?.trim();
+      const raw = first(
+        () => microText('alternativeHeadline'),
+        () => document.querySelector('.b-post__origtitle')?.textContent?.trim()
+      );
       if (!raw) return '';
       return raw.includes('/') ? raw.split('/').pop().trim() : raw;
     },
 
     poster() {
-      return document.querySelector('.b-post__infotable_left img')?.getAttribute('src') || '';
+      return first(
+        () => microText('image'),
+        () => meta('og:image'),
+        () => document.querySelector('.b-post__infotable_left img')?.getAttribute('src')
+      );
     },
 
     description() {
-      return document.querySelector('.b-post__description_text')?.textContent?.trim() || '';
+      return first(
+        () => meta('og:description'),
+        () => microText('description'),
+        () => document.querySelector('.b-post__description_text')?.textContent?.trim()
+      );
     },
+
+    year() {
+      return first(
+        () => meta('og:title').match(/\((\d{4})\)/)?.[1],
+        () => path().match(/-(\d{4})[^/]*\.html?$/)?.[1],
+        () => microText('datePublished').match(/\d{4}/)?.[0],
+        () => (site.info()['Год'] || site.info()['Дата выхода'] || '').match(/\d{4}/)?.[0]
+      );
+    },
+
+    duration() {
+      const secs = parseInt(meta('og:duration'), 10);
+      if (secs > 0) return `${Math.round(secs / 60)} мин.`;
+      return first(() => microText('duration'), () => site.info()['Время']);
+    },
+
+    genre() {
+      const g = microAll('genre');
+      return g.length ? g.join(', ') : site.info()['Жанр'] || '';
+    },
+
+    country() { return site.info()['Страна'] || ''; },
 
     rating() {
-      const el = document.querySelector('.b-post__rating');
-      if (!el) return null;
-      const score = el.querySelector('.num')?.textContent?.trim()
-        || el.textContent.match(/(\d+[.,]\d+)/)?.[1];
-      const votes = el.querySelector('.votes')?.textContent?.replace(/[()\s]/g, '')
-        || el.textContent.match(/\((\d[\d\s]*)\)/)?.[1]?.replace(/\s/g, '');
-      return score ? { score: String(score).replace(',', '.'), votes: votes || '' } : null;
+      const score = first(() => microText('average'),
+        () => document.querySelector('.b-post__rating .num')?.textContent?.trim());
+      if (!score) return null;
+      const votes = first(() => microText('votes'),
+        () => document.querySelector('.b-post__rating .votes')?.textContent?.replace(/[()\s]/g, ''));
+      return { score: String(score).replace(',', '.'), votes: votes || '' };
     },
 
-    // The info table is a plain key/value list; keys vary by content type.
+    /** Only used for the leftovers no structured source covers. */
     info() {
       const out = {};
-      for (const tr of document.querySelectorAll('.b-post__info tr')) {
-        const k = tr.querySelector('td.l')?.textContent?.trim().replace(/:$/, '');
-        if (!k) continue;
-        const v = tr.querySelector('td:not(.l)')?.textContent?.replace(/\s+/g, ' ').trim();
-        if (v) out[k] = v;
+      for (const tr of document.querySelectorAll('table tr')) {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length < 2) continue;
+        const k = cells[0].textContent?.trim().replace(/:$/, '');
+        const v = cells[cells.length - 1].textContent?.replace(/\s+/g, ' ').trim();
+        if (k && v && k.length < 30 && !out[k]) out[k] = v;
       }
       return out;
     },
 
-    year() {
-      const meta = document.querySelector('meta[property="og:title"]')?.content;
-      const fromMeta = meta?.match(/\((\d{4})\)/)?.[1];
-      if (fromMeta) return fromMeta;
-      const info = site.info();
-      return (info['Год'] || info['Дата выхода'] || '').match(/\d{4}/)?.[0] || '';
-    },
-
     isSeries() {
-      return Boolean(document.querySelector('.b-simple_episode__item'));
+      if (document.querySelector('[data-episode_id]')) return true;
+      return meta('og:type') === 'video.tv_series';
     },
 
+    // data-* attributes, not class names: the site's own scripts read these,
+    // so they survive a restyle.
     translators() {
-      return [...document.querySelectorAll('.b-translator__item')].map(el => ({
+      return [...document.querySelectorAll('[data-translator_id]')].map(el => ({
         id: el.dataset.translator_id,
         name: el.textContent.trim(),
-        premium: el.classList.contains('b-prem_translator'),
-        active: el.classList.contains('active')
-      }));
+        premium: /prem/i.test(el.className || ''),
+        active: /\bactive\b/.test(el.className || '')
+      })).filter(t => t.id && t.name);
     },
 
-    // Films, and some series, carry no tabs at all.
     soleTranslator() {
-      const row = [...document.querySelectorAll('.b-post__info tr')]
-        .find(tr => tr.querySelector('td.l')?.textContent.includes('В переводе'));
       return {
         id: site.scrapeTranslatorId() || 'single',
-        name: row?.querySelector('td:not(.l)')?.textContent.trim() || 'Оригинал',
+        name: site.info()['В переводе'] || 'Оригинал',
         premium: false,
         active: true
       };
@@ -146,23 +222,24 @@
     },
 
     seasons() {
-      return [...document.querySelectorAll('.b-simple_season__item')].map(el => ({
+      return [...document.querySelectorAll('[data-tab_id]')].map(el => ({
         id: el.dataset.tab_id,
         label: el.textContent.trim(),
-        active: el.classList.contains('active')
-      }));
+        active: /\bactive\b/.test(el.className || '')
+      })).filter(s => s.id);
     },
 
     // Episodes carry their own season id, so the whole map is readable without
     // clicking through the site's tabs.
     episodes() {
       const out = {};
-      for (const el of document.querySelectorAll('.b-simple_episode__item')) {
-        const s = el.dataset.season_id || site.seasons().find(x => x.active)?.id || '1';
+      const fallbackSeason = site.seasons().find(x => x.active)?.id || '1';
+      for (const el of document.querySelectorAll('[data-episode_id]')) {
+        const s = el.dataset.season_id || fallbackSeason;
         (out[s] ||= []).push({
           id: el.dataset.episode_id,
           label: el.textContent.trim(),
-          active: el.classList.contains('active')
+          active: /\bactive\b/.test(el.className || '')
         });
       }
       return out;
@@ -183,28 +260,42 @@
     },
 
     heading() {
-      return document.querySelector('.b-content__htitle')?.textContent?.trim() || '';
+      return first(
+        () => document.querySelector('.b-content__htitle')?.textContent?.trim(),
+        () => meta('og:title'),
+        () => document.title.split('|')[0].trim()
+      );
     },
 
+    // Cards are found by the attributes the site's own code uses, and read
+    // structurally — no class names involved.
     cards() {
-      return [...document.querySelectorAll('.b-content__inline_item')].map(el => {
-        const link = el.querySelector('.b-content__inline_item-link');
+      return [...document.querySelectorAll('[data-url][data-id]')].map(el => {
+        const named = [...el.querySelectorAll('a')]
+          .find(a => !a.querySelector('img') && a.textContent.trim());
+        const img = el.querySelector('img');
+        // The year/country/genre line: the innermost text that carries a year.
+        // Skipping anything wrapping a link or image keeps the title out of it.
+        const blurb = [...el.querySelectorAll('div, span, p')]
+          .filter(n => !n.querySelector('a, img'))
+          .map(n => n.textContent.replace(/\s+/g, ' ').trim())
+          .find(t => t && t.length < 90 && /\b(19|20)\d{2}\b/.test(t));
         return {
           id: el.dataset.id,
-          url: el.dataset.url || link?.querySelector('a')?.href || '',
-          cover: el.querySelector('.b-content__inline_item-cover img')?.getAttribute('src') || '',
-          kind: [...(el.querySelector('.cat')?.classList || [])].find(c => c !== 'cat') || '',
-          entity: el.querySelector('.cat .entity')?.textContent?.trim() || '',
-          title: link?.querySelector('a')?.textContent?.trim() || '',
-          meta: link?.querySelector('div')?.textContent?.replace(/\s+/g, ' ').trim() || ''
+          url: el.dataset.url,
+          cover: img?.getAttribute('src') || '',
+          entity: el.querySelector('.entity')?.textContent?.trim() || '',
+          title: named?.textContent.trim() || img?.getAttribute('alt')?.trim() || '',
+          meta: blurb || ''
         };
       }).filter(c => c.title && c.url);
     },
 
     pages() {
-      return [...document.querySelectorAll('.b-navigation a')]
-        .map(a => ({ label: a.textContent.trim(), url: a.href }))
-        .filter(p => p.label);
+      const links = document.querySelectorAll('.b-navigation a, a[href*="/page/"]');
+      const seen = new Set();
+      return [...links].map(a => ({ label: a.textContent.trim(), url: a.href }))
+        .filter(p => p.label && !seen.has(p.url) && seen.add(p.url));
     }
   };
 
@@ -330,6 +421,124 @@
       return free.find(s => s.label === store.quality) || free[0];
     }
   };
+
+  // ----------------------------------------------------------- throughput ----
+  // How fast the file is actually arriving, and whether that is enough.
+  //
+  // The reliable signal costs nothing: <video>.buffered tells us how many
+  // seconds of video have arrived, so seconds-buffered per second-of-wall-clock
+  // is the headroom. Above 1 the download outpaces playback and it will not
+  // stall. Turning that into Mbit/s needs the file size, which is cross-origin
+  // and therefore only reachable through GM_xmlhttpRequest — so absolute
+  // figures are a bonus, never the thing correctness rests on.
+
+  const speed = {
+    samples: [],
+    size: null,
+    duration: null,
+    sizes: new Map(),        // url -> bytes | null (null = asked, unavailable)
+
+    reset() { speed.samples = []; speed.size = null; speed.duration = null; },
+
+    push(buffered, t) {
+      const s = speed.samples;
+      const last = s[s.length - 1];
+      // A seek rewinds buffered; start a fresh window rather than report a dip.
+      if (last && buffered < last.b) { speed.samples = [{ b: buffered, t }]; return; }
+      s.push({ b: buffered, t });
+      while (s.length > 2 && t - s[0].t > 20000) s.shift();
+    },
+
+    /** Seconds of video arriving per second of wall clock. */
+    rate() {
+      const s = speed.samples;
+      if (s.length < 2) return null;
+      const dt = (s[s.length - 1].t - s[0].t) / 1000;
+      if (dt < 2) return null;
+      return Math.max(0, (s[s.length - 1].b - s[0].b) / dt);
+    },
+
+    bitrate() {
+      if (!speed.size || !speed.duration) return null;
+      return (speed.size * 8) / speed.duration;
+    },
+
+    throughput() {
+      const r = speed.rate(), b = speed.bitrate();
+      return r === null || b === null ? null : r * b;
+    },
+
+    /**
+     * How much of a cushion there is, from two independent angles.
+     *
+     * Fill rate alone is misleading: CDNs commonly pace delivery to roughly
+     * real time once the player is comfortable, so a perfectly healthy stream
+     * sits at 1.0x forever. What actually predicts a stall is how many seconds
+     * are buffered ahead of the playhead — so a deep buffer is enough on its
+     * own, and so is a fast fill.
+     */
+    verdict(rate, done, ahead) {
+      if (done) return 'good';
+      if (ahead >= 30 || (rate !== null && rate >= 2)) return 'good';
+      if (ahead >= 10 || (rate !== null && rate >= 1.15)) return 'ok';
+      if (rate === null) return 'idle';
+      return 'poor';
+    },
+
+    /** Cross-origin HEAD; only Tampermonkey-style managers can do this. */
+    probe(url) {
+      if (speed.sizes.has(url)) return Promise.resolve(speed.sizes.get(url));
+      if (typeof GM_xmlhttpRequest !== 'function') return Promise.resolve(null);
+      return new Promise(resolve => {
+        const done = bytes => { speed.sizes.set(url, bytes); resolve(bytes); };
+        try {
+          GM_xmlhttpRequest({
+            method: 'HEAD', url, timeout: 9000,
+            onload: r => {
+              const m = /content-length:\s*(\d+)/i.exec(r.responseHeaders || '');
+              done(m ? parseInt(m[1], 10) : null);
+            },
+            onerror: () => done(null),
+            ontimeout: () => done(null)
+          });
+        } catch (e) { done(null); }
+      });
+    },
+
+    tick() {
+      const v = player.video;
+      if (!v || !ui.el.speedText) return;
+      const d = isFinite(v.duration) && v.duration > 0 ? v.duration : null;
+      if (d) speed.duration = d;
+      const end = v.buffered?.length ? v.buffered.end(v.buffered.length - 1) : 0;
+      if (!v.paused) speed.push(end, Date.now());
+
+      const done = d ? end >= d - 0.5 : false;
+      const ahead = Math.max(0, end - (v.currentTime || 0));
+      const rate = speed.rate();
+      const level = speed.verdict(rate, done, ahead);
+      const bits = speed.throughput();
+
+      const parts = [];
+      if (bits) parts.push(fmtRate(bits));
+      if (done) {
+        parts.push('загружено целиком');
+      } else {
+        if (ahead > 0) parts.push(`буфер ${Math.round(ahead)} с`);
+        if (rate !== null) parts.push(`запас ${rate.toFixed(1)}×`);
+        if (level === 'idle') parts.push('измеряется…');
+        if (level === 'poor') parts.push('возможны паузы');
+      }
+      if (speed.size) parts.push(fmtSize(speed.size));
+
+      ui.el.speed.hidden = false;
+      ui.el.speedText.textContent = parts.join(' · ');
+      ui.el.speedDot.className = 'pulse ' + level;
+    }
+  };
+
+  const fmtSize = b => !b ? '' : b >= 1e9 ? `${(b / 1e9).toFixed(2)} ГБ` : `${Math.round(b / 1e6)} МБ`;
+  const fmtRate = bps => bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Мбит/с` : `${Math.round(bps / 1e3)} Кбит/с`;
 
   // ------------------------------------------------------------------ css ----
 
@@ -458,6 +667,15 @@
     .note.error { color: var(--bad); }
     .note[hidden] { display: none; }
 
+    .speed { display: flex; align-items: center; gap: 8px; padding: 8px 0 0;
+             font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+    .speed[hidden] { display: none; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+    .pulse.good { background: #35c759; }
+    .pulse.ok { background: #f5c451; }
+    .pulse.poor { background: #ff6b6b; }
+    .pulse.idle { background: var(--faint); }
+
     /* ---- episodes ---- */
     .eps { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 7px; padding: 16px 0 0; }
     .ep { padding: 9px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface);
@@ -536,6 +754,7 @@
     host: null, shadow: null, root: null, menu: null, el: {},
 
     mount(view) {
+      if (!document.body || document.getElementById('rzk-app')) return;
       const host = document.createElement('div');
       host.id = 'rzk-app';
       const shadow = host.attachShadow({ mode: 'open' });
@@ -686,9 +905,9 @@
         screen.classList.add('paused');
         ui.el.toggle.innerHTML = I.play;
       });
-      v.addEventListener('timeupdate', player.tick);
+      v.addEventListener('timeupdate', () => { player.tick(); speed.tick(); });
       v.addEventListener('durationchange', player.tick);
-      v.addEventListener('progress', player.tick);
+      v.addEventListener('progress', () => { player.tick(); speed.tick(); });
       // Checkpoint on pause rather than on a timer, so nothing keeps running
       // once the page is idle.
       v.addEventListener('pause', player.remember);
@@ -755,6 +974,13 @@
       v.src = stream.url;
       if (at > 30) v.currentTime = at;
       player.ready = true;
+
+      speed.reset();
+      speed.probe(stream.url).then(bytes => {
+        if (store.selected()?.url !== stream.url) return;
+        speed.size = bytes;
+        speed.tick();
+      });
     },
 
     // Hand playback back to the site rather than pretending.
@@ -786,7 +1012,7 @@
     render() {
       const info = site.info();
       const rating = site.rating();
-      const facts = [site.year(), info['Страна'], info['Жанр'], info['Время']].filter(Boolean);
+      const facts = [site.year(), site.country(), site.genre(), site.duration()].filter(Boolean);
 
       return `
       <main class="wrap">
@@ -803,6 +1029,10 @@
 
         <div class="strip" data-el="strip"></div>
         <p class="note" data-el="note" role="status" aria-live="polite" hidden></p>
+        <div class="speed" data-el="speed" hidden>
+          <span class="pulse idle" data-el="speedDot"></span>
+          <span data-el="speedText"></span>
+        </div>
         <div class="eps" data-el="eps"></div>
 
         <section class="meta">
@@ -875,7 +1105,10 @@
           i => i.value === store.season);
       }
       ui.el.qualityMenu.innerHTML = ui.options(
-        store.free().map(s => ({ value: s.label, label: s.label })),
+        store.free().map(s => {
+          const bytes = speed.sizes.get(s.url);
+          return { value: s.label, label: bytes ? `${s.label} · ${fmtSize(bytes)}` : s.label };
+        }),
         i => i.value === store.selected()?.label);
     },
 
@@ -883,7 +1116,17 @@
       for (const btn of ui.root.querySelectorAll('[data-opens]')) {
         btn.addEventListener('click', e => {
           e.stopPropagation();
-          ui.menuFor(ui.menu === btn.dataset.opens ? null : btn.dataset.opens);
+          const name = btn.dataset.opens;
+          ui.menuFor(ui.menu === name ? null : name);
+          // Sizes make the choice concrete, but cost a request each — only ask
+          // when the list is actually on screen, and only once per URL.
+          if (ui.menu === 'quality') {
+            const unknown = store.free().filter(s => !speed.sizes.has(s.url));
+            if (unknown.length) {
+              Promise.all(unknown.map(s => speed.probe(s.url)))
+                .then(() => { if (ui.el.qualityMenu) watchView.fillMenus(); });
+            }
+          }
         });
       }
       const on = (menu, fn) => ui.el[menu]?.addEventListener('click', e => {
@@ -1121,25 +1364,50 @@
     addEventListener('beforeunload', player.remember);
   }
 
-  function init() {
-    const kind = site.kind();
-    if (!kind) return;
-    if (kind === 'watch') initWatch();
-    else { ui.mount(gridView.render()); }
-  }
-
   // One global rule, and it only bites once our own UI is up.
+  //
+  // At document-start the document can still be completely empty — no head and
+  // no documentElement — so this has to survive being called too early and be
+  // safe to call again later.
   function armTakeover() {
+    if (document.getElementById('rzk-takeover')) return true;
+    const parent = document.head || document.documentElement;
+    if (!parent) return false;
     const style = document.createElement('style');
     style.id = 'rzk-takeover';
     style.textContent = `html[data-rzk="on"] body > *:not(#rzk-app) { display: none !important; }
                          html[data-rzk="on"] { background: #0b0b0e; }
                          html[data-rzk="on"] body { overflow: auto !important; }`;
-    (document.head || document.documentElement).appendChild(style);
+    parent.appendChild(style);
+    return true;
   }
 
-  interceptXHR();
-  armTakeover();
-  if (document.readyState !== 'loading') init();
-  else document.addEventListener('DOMContentLoaded', init);
+  // Nothing here may throw its way out: a failure in one step must not stop the
+  // others from running, and a half-built UI must never leave a blank page.
+  function guard(label, fn) {
+    try { return fn(); }
+    catch (e) { console.error(`[rezka] ${label}:`, e); return null; }
+  }
+
+  function boot() {
+    guard('takeover', armTakeover);
+    const kind = guard('detect', () => site.kind());
+    if (!kind) return;
+    guard('render', () => {
+      try {
+        if (kind === 'watch') initWatch();
+        else ui.mount(gridView.render());
+      } catch (e) {
+        // Give the real site back rather than stranding the reader.
+        document.documentElement.removeAttribute('data-rzk');
+        document.getElementById('rzk-app')?.remove();
+        throw e;
+      }
+    });
+  }
+
+  guard('intercept', interceptXHR);
+  guard('takeover', armTakeover);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+  else boot();
 })();

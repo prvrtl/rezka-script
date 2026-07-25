@@ -4,7 +4,7 @@ import {
   load, settle, cdnPayload, shadow, el, all, text, value,
   options, optionLabels, takenOver
 } from './harness.mjs';
-import { filmPage, seriesPage, gridPage, streamList } from './fixtures.mjs';
+import { filmPage, seriesPage, gridPage, streamList, SCRAMBLED } from './fixtures.mjs';
 
 /** Emulate the site's own AJAX call so the script's XHR intercept picks it up. */
 function deliver(window, { tid = '57', season = '2', episode = '1', url }) {
@@ -14,6 +14,8 @@ function deliver(window, { tid = '57', season = '2', episode = '1', url }) {
   xhr.respond(cdnPayload(url));
   return xhr;
 }
+
+const CATALOG_URL = 'https://rezka-ua.tv/films/';
 
 const pick = (doc, menu, label) =>
   options(doc, menu).find((o) => o.textContent.trim().includes(label));
@@ -30,7 +32,7 @@ test('a watch page is taken over', async () => {
 });
 
 test('a catalog page is taken over', async () => {
-  const { doc } = load(gridPage());
+  const { doc } = load(gridPage(), { url: CATALOG_URL });
   await settle();
 
   assert.ok(shadow(doc));
@@ -38,7 +40,7 @@ test('a catalog page is taken over', async () => {
 });
 
 test('a page that is neither is left completely alone', async () => {
-  const { doc } = load('<!doctype html><html><body><h1>О сайте</h1></body></html>');
+  const { doc } = load('<!doctype html><html><body><h1>О сайте</h1></body></html>', { url: 'https://rezka-ua.tv/about/' });
   await settle();
 
   assert.equal(doc.getElementById('rzk-app'), null);
@@ -84,7 +86,7 @@ test('synopsis and info table are carried over', async () => {
   const { doc } = load(seriesPage());
   await settle();
 
-  assert.match(text(doc, '.synopsis'), /Stand-in synopsis/);
+  assert.match(text(doc, '.synopsis'), /Краткое описание сериала/);
   const meta = text(doc, '.meta dl');
   assert.match(meta, /Страна/);
   assert.match(meta, /Япония/);
@@ -314,7 +316,7 @@ test('a success:false payload reports the site\'s own reason', async () => {
 // ------------------------------------------------------------------ grid ----
 
 test('catalog cards are rebuilt with cover, title and meta', async () => {
-  const { doc } = load(gridPage());
+  const { doc } = load(gridPage(), { url: CATALOG_URL });
   await settle();
 
   const cards = all(doc, '.card');
@@ -329,35 +331,44 @@ test('catalog cards are rebuilt with cover, title and meta', async () => {
 });
 
 test('covers are lazy so a long catalog does not fetch everything at once', async () => {
-  const { doc } = load(gridPage());
+  const { doc } = load(gridPage(), { url: CATALOG_URL });
   await settle();
 
   assert.equal(all(doc, '.card img').every((i) => i.getAttribute('loading') === 'lazy'), true);
 });
 
 test('pagination is carried through', async () => {
-  const { doc } = load(gridPage());
+  const { doc } = load(gridPage(), { url: CATALOG_URL });
   await settle();
 
   assert.deepEqual(all(doc, '.pager a').map((a) => a.textContent.trim()), ['1', '2', '3']);
 });
 
-test('an empty result set says so rather than rendering a bare grid', async () => {
-  const { doc } = load(gridPage({ items: [], pages: [] }));
+test('a search with no results says so instead of showing a bare page', async () => {
+  const { doc } = load(gridPage({ items: [], pages: [], heading: 'Результаты поиска' }),
+    { url: 'https://rezka-ua.tv/search/?do=search&subaction=search&q=zzz' });
   await settle();
 
-  assert.equal(doc.getElementById('rzk-app'), null, 'no cards means no grid page to take over');
+  assert.ok(shadow(doc), 'a search URL is still ours to render');
+  assert.match(text(doc, '.empty'), /Ничего не найдено/);
+});
+
+test('an ordinary page with no cards is left alone', async () => {
+  const { doc } = load(gridPage({ items: [], pages: [] }), { url: 'https://rezka-ua.tv/films/' });
+  await settle();
+
+  assert.equal(doc.getElementById('rzk-app'), null, 'nothing to show means no takeover');
 });
 
 test('the heading comes from the page', async () => {
-  const { doc } = load(gridPage({ heading: 'Результаты поиска «matrix»' }));
+  const { doc } = load(gridPage({ heading: 'Результаты поиска «matrix»' }), { url: CATALOG_URL });
   await settle();
 
   assert.equal(text(doc, '.gtitle'), 'Результаты поиска «matrix»');
 });
 
 test('search submits to the site\'s own search URL', async () => {
-  const { doc, window, effects } = load(gridPage());
+  const { doc, window, effects } = load(gridPage(), { url: CATALOG_URL });
   await settle();
 
   const input = el(doc, 'q');
@@ -366,6 +377,234 @@ test('search submits to the site\'s own search URL', async () => {
 
   assert.match(effects.navigated.at(-1), /\/search\/\?do=search&subaction=search&q=/);
   assert.match(decodeURIComponent(effects.navigated.at(-1)), /матрица/);
+});
+
+// ------------------------------------------ independence from the markup ----
+// The site is free to restyle whenever it likes. These run the whole UI against
+// a page where every structural class has been renamed, leaving only what the
+// script actually claims to depend on: the URL, meta tags and data-* attributes.
+
+const SERIES_URL = 'https://rezka-ua.tv/series/comedy/91371-klasnyi-kerivnyk-1998.html';
+
+test('a full restyle does not stop the watch page rendering', async () => {
+  const { doc } = load(seriesPage({ classes: SCRAMBLED }), { url: SERIES_URL });
+  await settle();
+
+  assert.ok(shadow(doc), 'still mounts');
+  assert.equal(text(doc, '.head h1'), 'Класний керівник', 'title from itemprop/og');
+  assert.equal(text(doc, '.head .orig'), 'Great Teacher', 'original from alternativeHeadline');
+  assert.match(text(doc, '.facts'), /1998/, 'year from og:title');
+  assert.match(text(doc, '.facts'), /Комедии/, 'genre from itemprop');
+  assert.match(text(doc, '.facts'), /45 мин\./, 'runtime from og:duration');
+  assert.match(text(doc, '.facts'), /9\.60/, 'rating from itemprop=average');
+  assert.match(text(doc, '.synopsis'), /Краткое описание/, 'synopsis from og:description');
+});
+
+test('a full restyle does not stop voices, seasons or episodes working', async () => {
+  const { doc, effects } = load(seriesPage({ classes: SCRAMBLED }), { url: SERIES_URL });
+  await settle();
+
+  assert.match(value(doc, 'voice'), /Українська/, 'voices from data-translator_id');
+  assert.equal(optionLabels(doc, 'voice').length, 2, 'PRO still filtered out');
+  assert.equal(value(doc, 'season'), '2 сезон', 'seasons from data-tab_id');
+  assert.equal(all(doc, '.ep').length, 2, 'episodes from data-episode_id');
+  assert.match(effects.xhrs.at(-1).body, /translator_id=57&action=get_stream&season=2&episode=1/);
+});
+
+test('a full restyle does not stop the catalog rendering', async () => {
+  const { doc } = load(gridPage({ classes: SCRAMBLED }), { url: 'https://rezka-ua.tv/films/' });
+  await settle();
+
+  const cards = all(doc, '.card');
+  assert.equal(cards.length, 3, 'cards found by data-url/data-id');
+  assert.equal(cards[0].querySelector('.name').textContent.trim(), 'Поколение Икс');
+  assert.equal(cards[0].querySelector('.sub').textContent.trim(), '1996, США, Фантастика');
+  assert.match(cards[0].getAttribute('href'), /91370-pokolenie-iks/);
+  assert.equal(all(doc, '.pager a').length, 3, 'pagination from /page/ hrefs');
+});
+
+test('the content id comes from the URL, not a hidden input', async () => {
+  const html = seriesPage().replace(/<input[^>]*id="post_id"[^>]*>/, '');
+  const { effects } = load(html, { url: SERIES_URL });
+  await settle();
+
+  assert.match(effects.xhrs.at(-1).body, /(^|&)id=91371(&|$)/, 'id parsed out of the path');
+});
+
+test('a watch page is recognised from its URL alone', async () => {
+  // No #post_id and no cards — only the URL shape and og:type say what this is.
+  const html = seriesPage().replace(/<input[^>]*id="post_id"[^>]*>/, '');
+  const { doc } = load(html, { url: SERIES_URL });
+  await settle();
+
+  assert.ok(shadow(doc)?.querySelector('.head h1'), 'rendered as a watch page');
+});
+
+test('og:type alone is enough to treat something as a series', async () => {
+  // No season or episode tabs rendered at all — only og:type says it is a show.
+  const html = seriesPage({ seasons: [], episodes: {} });
+  const { effects } = load(html, { url: SERIES_URL });
+  await settle();
+
+  assert.match(effects.xhrs.at(-1)?.body || '', /action=get_stream/,
+    'video.tv_series implies episodes even with no tabs rendered');
+});
+
+// ----------------------------------------------------- stream throughput ----
+
+/** Drive playback: [[msElapsed, bufferedSeconds, playheadSeconds], …]. */
+function feed(doc, window, samples, duration = 3600) {
+  const v = el(doc, 'video');
+  v.__duration = duration;
+  for (const [ms, buffered, at = 0] of samples) {
+    window.__advance(ms);
+    v.__buffered = buffered;
+    v.__currentTime = at;
+    v.dispatchEvent(new window.Event('progress'));
+  }
+}
+
+const speedText = (doc) => el(doc, 'speedText').textContent;
+const speedLevel = (doc) => el(doc, 'speedDot').className.replace('pulse ', '');
+
+test('the speed readout stays hidden until playback produces data', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  assert.equal(el(doc, 'speed').hidden, true);
+});
+
+test('one sample is not enough to claim a rate', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  feed(doc, window, [[0, 3]]);
+
+  assert.equal(el(doc, 'speed').hidden, false);
+  assert.match(speedText(doc), /измеряется/);
+  assert.equal(speedLevel(doc), 'idle');
+});
+
+test('downloading faster than playback reports headroom', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  // 12s of video arrived over 4s of wall clock.
+  feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
+
+  assert.match(speedText(doc), /запас 3\.0×/);
+  assert.match(speedText(doc), /буфер 18 с/);
+  assert.equal(speedLevel(doc), 'good');
+});
+
+test('downloading slower than playback warns about stalling', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  // Only 2s of video in 4s of wall clock, and the playhead has eaten the buffer.
+  feed(doc, window, [[0, 10, 4], [4000, 12, 8]]);
+
+  assert.match(speedText(doc), /возможны паузы/);
+  assert.equal(speedLevel(doc), 'poor');
+});
+
+test('a CDN pacing at real time is not reported as failing', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  // Exactly 1x fill, but a healthy cushion ahead of the playhead.
+  feed(doc, window, [[0, 44, 4], [4000, 48, 8]]);
+
+  assert.equal(speedLevel(doc), 'good', '40s buffered is comfortable at any fill rate');
+  assert.doesNotMatch(speedText(doc), /возможны паузы/);
+});
+
+test('a fully buffered file reports that rather than a rate', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  feed(doc, window, [[0, 200, 0], [4000, 600, 4]], 600);
+
+  assert.match(speedText(doc), /загружено целиком/);
+  assert.equal(speedLevel(doc), 'good');
+});
+
+test('seeking backwards restarts the measurement instead of reporting a drop', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  feed(doc, window, [[0, 100, 0], [4000, 130, 4]]);
+  assert.match(speedText(doc), /запас/);
+
+  feed(doc, window, [[1000, 6, 3]]); // seek rewound the buffer
+  assert.match(speedText(doc), /измеряется/, 'window restarted, not a negative rate');
+});
+
+test('with a reachable file size the readout gives absolute figures', async () => {
+  const { doc, window } = load(seriesPage(), { fileSize: 2_000_000_000 });
+  await settle();
+  deliver(window, { url: streamList.plain });
+  await settle(0); // HEAD resolves in a microtask
+  el(doc, 'bigplay').click();
+
+  feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
+
+  assert.match(speedText(doc), /Мбит\/с/, 'throughput shown');
+  assert.match(speedText(doc), /2\.00 ГБ/, 'file size shown');
+});
+
+test('without GM_xmlhttpRequest it still reports headroom', async () => {
+  const { doc, window, effects } = load(seriesPage());
+  await settle();
+  deliver(window, { url: streamList.plain });
+  el(doc, 'bigplay').click();
+
+  feed(doc, window, [[0, 10, 0], [4000, 22, 4]]);
+
+  assert.equal(effects.headRequests.length, 0, 'no probing without the API');
+  assert.match(speedText(doc), /запас 3\.0×/);
+  assert.doesNotMatch(speedText(doc), /Мбит\/с/, 'no bitrate without a size');
+});
+
+test('opening the quality menu annotates each option with its size', async () => {
+  const { doc, window, effects } = load(seriesPage(), { fileSize: 1_500_000_000 });
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  el(doc, 'qualityPick').click();
+  await settle(5);
+
+  assert.equal(effects.headRequests.length >= 3, true, 'each free quality probed once');
+  assert.equal(optionLabels(doc, 'quality').every((l) => /ГБ/.test(l)), true, l => l);
+});
+
+test('sizes are probed once per URL, not on every menu open', async () => {
+  const { doc, window, effects } = load(seriesPage(), { fileSize: 1_000_000_000 });
+  await settle();
+  deliver(window, { url: streamList.plain });
+
+  el(doc, 'qualityPick').click();
+  await settle(5);
+  const first = effects.headRequests.length;
+
+  el(doc, 'qualityPick').click();
+  el(doc, 'qualityPick').click();
+  await settle(5);
+
+  assert.equal(effects.headRequests.length, first, 'cached');
 });
 
 // ----------------------------------------------------------------- menus ----

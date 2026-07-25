@@ -45,20 +45,42 @@ function stubMedia(window, effects) {
   proto.pause = function () { this.paused = true; this.dispatchEvent(new window.Event('pause')); };
   proto.load = function () {};
   Object.defineProperty(proto, 'paused', { writable: true, configurable: true, value: true });
-  Object.defineProperty(proto, 'buffered', { configurable: true, get() { return { length: 0 }; } });
   Object.defineProperty(proto, 'src', {
     configurable: true,
     get() { return this.getAttribute('src') || ''; },
     set(v) { this.setAttribute('src', v); effects.videoSrc.push(v); }
   });
+  // Tests drive these directly: how much has arrived, and how long the file is.
+  Object.defineProperty(proto, 'buffered', {
+    configurable: true,
+    get() {
+      const end = this.__buffered || 0;
+      return { length: end ? 1 : 0, end: () => end };
+    }
+  });
+  Object.defineProperty(proto, 'duration', {
+    configurable: true,
+    get() { return this.__duration ?? NaN; }
+  });
+  Object.defineProperty(proto, 'currentTime', {
+    configurable: true,
+    get() { return this.__currentTime || 0; },
+    set(v) { this.__currentTime = v; }
+  });
 }
 
-export function load(html, { url = 'https://rezka-ua.tv/films/drama/1-x.html', gmDownload = false } = {}) {
+export function load(html, {
+  url = 'https://rezka-ua.tv/films/drama/1-x.html',
+  gmDownload = false,
+  /** Byte size the fake GM_xmlhttpRequest reports; omit for no such API. */
+  fileSize = null,
+} = {}) {
   const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
 
   const effects = {
-    clipboard: [], anchorClicks: [], downloads: [], xhrs: [], videoSrc: [], navigated: []
+    clipboard: [], anchorClicks: [], downloads: [], xhrs: [],
+    videoSrc: [], navigated: [], headRequests: []
   };
 
   window.HTMLAnchorElement.prototype.click = function () {
@@ -81,6 +103,17 @@ export function load(html, { url = 'https://rezka-ua.tv/films/drama/1-x.html', g
   window.XMLHttpRequest = XHR;
   window.GM_setClipboard = (text) => effects.clipboard.push(text);
   if (gmDownload) window.GM_download = (opts) => effects.downloads.push(opts);
+  if (fileSize !== null) {
+    window.GM_xmlhttpRequest = (o) => {
+      effects.headRequests.push(o.url);
+      queueMicrotask(() => o.onload({ responseHeaders: `Content-Length: ${fileSize}\r\n` }));
+    };
+  }
+
+  // Deterministic clock so buffer-rate maths doesn't depend on wall time.
+  let now = 1_000_000;
+  window.Date.now = () => now;
+  window.__advance = (ms) => { now += ms; };
 
   const ctx = dom.getInternalVMContext();
   const source = readFileSync(SCRIPT, 'utf8');
