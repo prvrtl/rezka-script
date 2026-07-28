@@ -1769,3 +1769,22 @@ test('the menu opens its submenus for the keyboard too', async () => {
   assert.ok(row.classList.contains('open'));
   assert.equal(row.getAttribute('aria-expanded'), 'true');
 });
+
+test('fullscreen is recognised through the shadow boundary', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  const stage = el(doc, 'stage');
+
+  // document.fullscreenElement is retargeted to the host, so the stage only
+  // ever identifies itself through its own root. Standing in for a browser
+  // that has actually gone fullscreen:
+  Object.defineProperty(shadow(doc), 'fullscreenElement', { configurable: true, value: stage });
+  doc.dispatchEvent(new window.Event('fullscreenchange'));
+
+  assert.ok(stage.classList.contains('full'), 'the stage knows it is the screen');
+
+  Object.defineProperty(shadow(doc), 'fullscreenElement', { configurable: true, value: null });
+  doc.dispatchEvent(new window.Event('fullscreenchange'));
+
+  assert.equal(stage.classList.contains('full'), false);
+});

@@ -182,6 +182,11 @@ on release, because seeking on every intermediate position would be a range requ
 file that is still arriving. If the film stalls waiting on the network a ring says so —
 but not for the first buffer, where the poster is already saying *not yet*.
 
+Fullscreen means the screen: the margin that gives the stage its frame goes to zero, along
+with the rounded corners and the shadow, so a 16:9 release fills the display exactly. A
+2.35:1 one still fills the width edge to edge, and the glow gets the bars above and below
+to itself.
+
 When a wide film meets a narrow window the picture can end up shorter than the controls
 that would sit on it. Below that point the controls and the title step off the picture and
 use the black around it instead, so nothing is ever covering the film.

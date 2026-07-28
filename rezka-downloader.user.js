@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.7.1
+// @version        3.7.2
 // @description    Replaces the HDrezka interface with a clean one: an info page, a distraction-free watch mode with a right-click menu, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1173,7 +1173,19 @@
       background: radial-gradient(130% 100% at 50% 42%, #0a0a11 0%, #060609 62%, #030304 100%);
     }
     .app.watching .stage.idle { cursor: none; }
-    .stage:fullscreen { background: #030304; }
+
+    /* Fullscreen means the screen. The padding that gives the stage its margin
+       goes to zero, and with it the rounded corners, the border and the drop
+       shadow — all of which only make sense against something. The frame keeps
+       the film's shape, so a 2.35:1 release still fills the width edge to edge
+       and the glow gets the bars above and below to itself.
+       The class is set from fullscreenchange as well: :fullscreen on an element
+       inside a shadow root has been unreliable. */
+    .stage.full, .stage:fullscreen { --pad: 0px; background: #000; }
+    .stage.full .screen, .stage:fullscreen .screen {
+      border-radius: 0; border-color: transparent; box-shadow: none;
+    }
+    .stage.full .topbar, .stage:fullscreen .topbar { border-radius: 0; }
 
     /* The frame takes the film's own shape once metadata lands, so there are no
        black bars for the glow to spill out of. */
@@ -1984,6 +1996,12 @@
         else ui.el.stage?.requestFullscreen?.();
       });
       ui.el.leave?.addEventListener('click', () => actions.setWatching(false));
+      document.addEventListener('fullscreenchange', () => {
+        // document.fullscreenElement is retargeted to the shadow host, so the
+        // stage is only ever itself when asked through its own root.
+        ui.el.stage?.classList.toggle('full', ui.shadow?.fullscreenElement === ui.el.stage);
+        idle.poke();
+      });
 
       // A 2.4:1 film in a narrow window leaves a picture shorter than the
       // controls that would sit on it. Watch the frame rather than the window:
