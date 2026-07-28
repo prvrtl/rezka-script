@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.7
+// @version        3.7.1
 // @description    Replaces the HDrezka interface with a clean one: an info page, a distraction-free watch mode with a right-click menu, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1426,7 +1426,12 @@
     .face .shot { width: 42px; height: 42px; flex: none; border-radius: 50%; overflow: hidden;
                   background: var(--raised); display: grid; place-items: center;
                   color: var(--faint); font-size: 14px; font-weight: 600; }
-    .face .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* These are 2:3 headshots going into a circle, so a third of the height is
+       cropped away. Taken from the middle it lands on the mouth: hair off the
+       top, chin off the bottom. The face sits a little above centre in almost
+       every portrait ever taken, so the crop follows it up. */
+    .face .shot img { width: 100%; height: 100%; object-fit: cover;
+                      object-position: 50% 28%; display: block; }
     .face .who { min-width: 0; font-size: 13px; line-height: 1.3; color: var(--ink); }
     .face:hover .who { color: #fff; text-decoration: none; }
 
