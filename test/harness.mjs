@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, '..', 'rezka-downloader.user.js');
@@ -28,7 +28,13 @@ function makeXHRClass(sent, auto) {
       this.body = body;
       sent.push(this);
       // Optionally answer on its own, so a queue can run without hand-feeding.
-      if (auto) queueMicrotask(() => { try { this.respond(auto(body)); } catch (e) {} });
+      if (!auto) return;
+      queueMicrotask(() => {
+        let answer;
+        try { answer = auto(body, this.url); } catch (e) { return; }
+        if (answer === undefined) return;
+        try { this.respond(answer); } catch (e) {}
+      });
     }
     /** Test-side helper: deliver a response and fire the load handlers. */
     respond(payload) {
@@ -72,6 +78,12 @@ function stubMedia(window, effects) {
     get() { return this.__currentTime || 0; },
     set(v) { this.__currentTime = v; }
   });
+  Object.defineProperty(proto, 'playbackRate', { writable: true, configurable: true, value: 1 });
+  // The intrinsic size the frame shapes itself to. jsdom answers 0 for both and
+  // defines them on HTMLVideoElement, so the override has to go there too.
+  const video = window.HTMLVideoElement.prototype;
+  Object.defineProperty(video, 'videoWidth', { configurable: true, get() { return this.__vw || 0; } });
+  Object.defineProperty(video, 'videoHeight', { configurable: true, get() { return this.__vh || 0; } });
 }
 
 export function load(html, {
@@ -88,13 +100,25 @@ export function load(html, {
   storage = null,
   /** true, or (text) => translated — installs a fake on-device Translator. */
   translator = false,
+  /** Markup, or (q) => markup, answered by the site's live-search endpoint. */
+  suggest = null,
 } = {}) {
-  const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
+  // jsdom has no canvas, and the ambient glow asks for a 2d context on every
+  // run. The script already treats a refusal as "no glow"; only the log is
+  // noise, and it would drown the actual test output.
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.forwardTo(console, { jsdomErrors: 'none' });
+  // Same for window.scrollTo, which watch mode calls on the way out.
+  virtualConsole.on('jsdomError', (e) => {
+    if (!/getContext|scrollTo/.test(e.message)) console.error(e.message);
+  });
+
+  const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole });
   const { window } = dom;
 
   const effects = {
     clipboard: [], anchorClicks: [], downloads: [], xhrs: [],
-    videoSrc: [], navigated: [], headRequests: [], getRequests: [], aborted: [],
+    videoSrc: [], navigated: [], headRequests: [], getRequests: [], aborted: [], suggested: [],
     /** Download names in the order they completed. */
     finished: []
   };
@@ -124,7 +148,20 @@ export function load(html, {
       }
     : autoStream || null;
 
-  const XHR = makeXHRClass(effects.xhrs, streamFor);
+  // One responder for both endpoints: the live search answers with markup, the
+  // stream endpoint with JSON, and anything else is left to be fed by hand.
+  const answer = (streamFor || suggest !== null)
+    ? (body, url) => {
+        if (String(url).includes('search.php')) {
+          if (suggest === null) return undefined;
+          effects.suggested.push(new URLSearchParams(body).get('q'));
+          return typeof suggest === 'function' ? suggest(new URLSearchParams(body).get('q')) : suggest;
+        }
+        return streamFor ? streamFor(body) : undefined;
+      }
+    : null;
+
+  const XHR = makeXHRClass(effects.xhrs, answer);
   window.XMLHttpRequest = XHR;
   window.GM_setClipboard = (text) => effects.clipboard.push(text);
 
@@ -217,3 +254,33 @@ export const optionLabels = (doc, menu) => options(doc, menu).map((o) => o.textC
 
 /** Whether the original page is currently hidden by the takeover. */
 export const takenOver = (doc) => doc.documentElement.getAttribute('data-rzk') === 'on';
+
+/** Whether the stage is up and the info page out of the way. */
+export const watching = (doc) => Boolean(shadow(doc)?.querySelector('.app.watching'));
+
+/** A row of the right-click menu, by the action it performs. */
+export const cmRow = (doc, act) => shadow(doc)?.querySelector(`[data-act="${act}"]`) ?? null;
+
+/** Options inside one of the right-click menu's submenus. */
+export const cmOptions = (doc, name) => all(doc, `[data-el="cm${name}Menu"] .opt`);
+
+export const cmPick = (doc, name, label) =>
+  cmOptions(doc, name).find((o) => o.textContent.trim() === label);
+
+/** Right-click the film, the way a reader reaches the menu. */
+export function rightClick(window, node, clientX = 120, clientY = 120) {
+  const e = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY });
+  node.dispatchEvent(e);
+  return e;
+}
+
+/** A keypress the page-level shortcuts will see. */
+export const press = (window, doc, key) =>
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+/** jsdom never loads media, so the metadata milestone has to be announced. */
+export function metadata(window, video, { width = 1920, height = 1080 } = {}) {
+  video.__vw = width;
+  video.__vh = height;
+  video.dispatchEvent(new window.Event('loadedmetadata'));
+}

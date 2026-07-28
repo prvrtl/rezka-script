@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   load, settle, cdnPayload, shadow, el, all, text, value,
-  options, optionLabels, takenOver
+  options, optionLabels, takenOver, watching, cmRow, cmOptions, cmPick, rightClick, press, metadata
 } from './harness.mjs';
-import { filmPage, seriesPage, gridPage, streamList, SCRAMBLED } from './fixtures.mjs';
+import { filmPage, seriesPage, gridPage, streamList, SCRAMBLED, CAST, DIRECTOR } from './fixtures.mjs';
 
 /** Emulate the site's own AJAX call so the script's XHR intercept picks it up. */
 function deliver(window, { tid = '57', season = '2', episode = '1', url, extra = {} }) {
@@ -1218,4 +1218,554 @@ test('subtitles are not attached twice when the stream is re-read', async () => 
 
   assert.deepEqual(tracks(doc).map((t) => t.getAttribute('srclang')), ['ru', 'en'],
     'one track per language, however many times it reloads');
+});
+
+// ------------------------------------------------------------ watch mode ----
+// The split: the info page decides, the stage plays. Nothing is on screen in
+// watch mode that is not the film or the light coming off it.
+
+const SUBBED = { url: streamList.plain, extra: SUBS };
+
+/** A page already delivered a stream, with a video element ready to drive. */
+async function ready(opts = {}) {
+  const kit = load(seriesPage(), { url: SERIES_URL, vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n', ...opts });
+  await settle();
+  deliver(kit.window, SUBBED);
+  await settle(20);
+  return kit;
+}
+
+test('the info page holds no player until watch is pressed', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+
+  assert.equal(el(doc, 'watch').disabled, true, 'nothing to watch yet');
+  assert.equal(watching(doc), false);
+
+  deliver(window, { url: streamList.plain });
+  assert.equal(el(doc, 'watch').disabled, false, 'a file arrived');
+
+  el(doc, 'watch').click();
+
+  assert.equal(watching(doc), true, 'the stage is up');
+  assert.equal(doc.documentElement.hasAttribute('data-rzk-watch'), true, 'the page behind is pinned');
+  assert.equal(el(doc, 'video').paused, false, 'pressing watch starts the film');
+});
+
+test('leaving the stage stops the film and hands the page back', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  el(doc, 'leave').click();
+
+  assert.equal(watching(doc), false);
+  assert.equal(doc.documentElement.hasAttribute('data-rzk-watch'), false);
+  assert.equal(el(doc, 'video').paused, true, 'no audio left running behind the page');
+  assert.equal(takenOver(doc), true, 'still our interface, just the info page again');
+});
+
+test('escape leaves the stage', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  press(window, doc, 'Escape');
+
+  assert.equal(watching(doc), false);
+});
+
+test('the watch button offers to pick up where it stopped', async () => {
+  const { doc, window } = await ready({ storage: { 'rzk.pos': { '91371:2:1': 3725 } } });
+
+  assert.match(el(doc, 'watch').textContent, /Resume · 1:02:05/);
+});
+
+test('a position under half a minute is not worth offering to resume', async () => {
+  const { doc } = await ready({ storage: { 'rzk.pos': { '91371:2:1': 12 } } });
+
+  assert.equal(el(doc, 'watch').textContent.trim(), 'Watch');
+});
+
+test('the frame takes the film\'s own shape, so nothing is letterboxed', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  metadata(window, el(doc, 'video'), { width: 1920, height: 800 });
+
+  const frame = el(doc, 'frame');
+  assert.equal(frame.style.getPropertyValue('--ar'), '1920 / 800');
+  assert.equal(frame.style.getPropertyValue('--arn'), '2.4');
+});
+
+// -------------------------------------------------------- the film's menu ----
+
+test('right-clicking the film opens our menu instead of the browser\'s', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  const e = rightClick(window, el(doc, 'stage'));
+
+  assert.equal(e.defaultPrevented, true, 'the browser menu is refused');
+  assert.equal(el(doc, 'cmenu').hidden, false);
+});
+
+test('escape closes the menu before it closes the stage', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  rightClick(window, el(doc, 'stage'));
+
+  press(window, doc, 'Escape');
+  assert.equal(el(doc, 'cmenu').hidden, true, 'the menu goes first');
+  assert.equal(watching(doc), true, 'and the film stays');
+
+  press(window, doc, 'Escape');
+  assert.equal(watching(doc), false);
+});
+
+test('the menu carries every free quality, and choosing one keeps the moment', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  const video = el(doc, 'video');
+  metadata(window, video);
+  video.currentTime = 640;
+
+  rightClick(window, el(doc, 'stage'));
+  assert.deepEqual(cmOptions(doc, 'quality').map((o) => o.textContent.trim()), ['1080p', '720p', '360p']);
+
+  cmPick(doc, 'quality', '720p').click();
+  metadata(window, video);
+
+  assert.match(video.getAttribute('src'), /_720\.mp4$/);
+  assert.equal(video.currentTime, 640, 'same moment, other file');
+  assert.equal(video.paused, false, 'and still playing');
+  assert.equal(el(doc, 'cmenu').hidden, true, 'the menu closes behind the choice');
+});
+
+test('the menu switches subtitles, and the choice outlives the episode', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  rightClick(window, el(doc, 'stage'));
+  assert.deepEqual(cmOptions(doc, 'caption').map((o) => o.textContent.trim()),
+    ['Off', 'Русский', 'English']);
+
+  cmPick(doc, 'caption', 'Русский').click();
+
+  // A new episode rebuilds the whole track list from the response, which marks
+  // English as its default — the reader's choice has to win anyway.
+  all(doc, '.ep')[1].click();
+  deliver(window, { episode: '2', ...SUBBED });
+  await settle(30);
+
+  const marked = tracks(doc).filter((t) => t.hasAttribute('default'));
+  assert.deepEqual(marked, [], 'nothing is switched on over the reader\'s head');
+  rightClick(window, el(doc, 'stage'));
+  assert.equal(el(doc, 'cmcaptionVal').textContent.trim(), 'Русский');
+});
+
+test('the menu sets playback speed', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  rightClick(window, el(doc, 'stage'));
+  cmPick(doc, 'rate', '1.5×').click();
+
+  assert.equal(el(doc, 'video').playbackRate, 1.5);
+
+  rightClick(window, el(doc, 'stage'));
+  assert.equal(el(doc, 'cmrateVal').textContent.trim(), '1.5×');
+});
+
+test('the menu only shows rows that mean something here', async () => {
+  const { doc, window } = load(filmPage());
+  await settle();
+  deliver(window, { tid: 'single', season: '', episode: '', url: streamList.plain });
+  el(doc, 'watch').click();
+  rightClick(window, el(doc, 'stage'));
+
+  assert.equal(shadow(doc).querySelector('[data-sub="episode"]').hidden, true, 'a film has no episodes');
+  assert.equal(shadow(doc).querySelector('[data-sub="voice"]').hidden, true, 'one voice is no choice');
+  assert.equal(shadow(doc).querySelector('[data-sub="caption"]').hidden, true, 'no subtitles came with it');
+  assert.equal(cmRow(doc, 'next').hidden, true, 'nothing to go on to');
+});
+
+test('the menu carries the same download, copy and leech the page offers', async () => {
+  const { doc, window, effects } = await ready();
+  el(doc, 'watch').click();
+
+  rightClick(window, el(doc, 'stage'));
+  cmRow(doc, 'copy').click();
+
+  assert.equal(effects.clipboard.at(-1), 'https://cdn.example.net/a_1080.mp4');
+  assert.equal(el(doc, 'cmenu').hidden, true);
+});
+
+test('the menu hands the frame to the browser\'s own controls', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  rightClick(window, el(doc, 'stage'));
+  cmRow(doc, 'mode').click();
+
+  assert.equal(el(doc, 'video').controls, true);
+  assert.equal(el(doc, 'mode').textContent.trim(), 'Custom player', 'the info page agrees');
+});
+
+test('the menu moves to the next episode', async () => {
+  const { doc, window, effects } = await ready();
+  el(doc, 'watch').click();
+
+  rightClick(window, el(doc, 'stage'));
+  assert.equal(cmRow(doc, 'next').hidden, false);
+  cmRow(doc, 'next').click();
+  await settle(10);
+
+  assert.match(effects.xhrs.at(-1).body, /episode=2/);
+  assert.equal(watching(doc), true, 'without leaving the stage');
+});
+
+// ------------------------------------------------------------------ people ----
+
+test('the cast is listed, each name leading to their page', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  const faces = all(doc, '.face');
+  assert.deepEqual(faces.map((f) => f.querySelector('.who').textContent.trim()),
+    CAST.map((p) => p.name));
+  assert.equal(faces[0].getAttribute('href'), `https://rezka-ua.tv/person/${CAST[0].id}-${CAST[0].slug}/`);
+  assert.equal(faces[0].querySelector('img').getAttribute('src'), CAST[0].photo);
+});
+
+test('an actor with no photo still gets a face', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  const second = all(doc, '.face')[1];
+  assert.equal(second.querySelector('img'), null, 'nothing to show');
+  assert.equal(second.querySelector('.shot').textContent.trim(), 'Н', 'their initial instead');
+});
+
+test('the director is a link, not flat text', async () => {
+  const { doc } = load(seriesPage());
+  await settle();
+
+  const link = shadow(doc).querySelector('.meta dd a');
+  assert.equal(link.textContent.trim(), DIRECTOR.name);
+  assert.equal(link.getAttribute('href'), `https://rezka-ua.tv/person/${DIRECTOR.id}-${DIRECTOR.slug}/`);
+});
+
+test('a page with no people named renders without a cast', async () => {
+  const { doc } = load(filmPage());
+  await settle();
+
+  assert.equal(all(doc, '.face').length, 0);
+  assert.equal(shadow(doc).querySelector('.meta dd a'), null);
+});
+
+// ------------------------------------------------------------ suggestions ----
+
+const LIVE = `<div class="b-search__live_section"><ul class="b-search__section_list">
+  <li><a href="https://rezka-ua.tv/films/fiction/981-matrica-1999-latest.html"><span class="enty">Матрица</span> (The Matrix, 1999)<span class="rating"><i class="rating-green-string" title="Рейтинг">8.50</i></span></a></li>
+  <li><a href="https://rezka-ua.tv/films/fiction/982-matrica-perezagruzka-2003-latest.html"><span class="enty">Матрица: Перезагрузка</span> (The Matrix Reloaded, 2003)<span class="rating"><i class="rating-green-string" title="Рейтинг">7.74</i></span></a></li>
+</ul></div><a class="b-search__live_all" href="/search/?do=search&amp;q=mat">Смотреть все</a>`;
+
+/** Type into the search box the way a reader does. */
+async function typeSearch(doc, window, q, wait = 260) {
+  const input = el(doc, 'q');
+  input.value = q;
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle(wait);
+  return input;
+}
+
+const rows = (doc) => all(doc, '.sugg .sg');
+
+test('typing offers what the site itself would suggest', async () => {
+  const { doc, window } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+
+  assert.equal(el(doc, 'sugg').hidden, true, 'nothing before anything is typed');
+  await typeSearch(doc, window, 'матри');
+
+  assert.equal(el(doc, 'sugg').hidden, false);
+  const first = rows(doc)[0];
+  assert.equal(first.querySelector('.name').textContent.trim(), 'Матрица');
+  assert.equal(first.querySelector('.note').textContent.trim(), 'The Matrix, 1999');
+  assert.equal(first.querySelector('.rate').textContent.trim(), '8.50');
+  assert.equal(first.getAttribute('href'), 'https://rezka-ua.tv/films/fiction/981-matrica-1999-latest.html');
+  assert.match(rows(doc).at(-1).textContent, /All results for/);
+});
+
+test('a single letter is not worth a request', async () => {
+  const { doc, window, effects } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+
+  await typeSearch(doc, window, 'м');
+
+  assert.deepEqual(effects.suggested, [], 'nothing asked');
+  assert.equal(el(doc, 'sugg').hidden, true);
+});
+
+test('a burst of typing asks once, for the last thing typed', async () => {
+  const { doc, window, effects } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+
+  const input = el(doc, 'q');
+  for (const q of ['ма', 'мат', 'матр']) {
+    input.value = q;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await settle(20);
+  }
+  await settle(260);
+
+  assert.deepEqual(effects.suggested, ['матр']);
+});
+
+test('an answer that arrives after the box moved on is dropped', async () => {
+  const { doc, window } = load(seriesPage(), {
+    suggest: (q) => (q === 'матри' ? LIVE : '<ul><li><a href="/late/"><span class="enty">Late</span></a></li></ul>'),
+  });
+  await settle();
+
+  await typeSearch(doc, window, 'что-то', 0);
+  await typeSearch(doc, window, 'матри');
+
+  assert.deepEqual(rows(doc).slice(0, 2).map((r) => r.querySelector('.name').textContent.trim()),
+    ['Матрица', 'Матрица: Перезагрузка'], 'only the current query is on screen');
+});
+
+test('arrow keys walk the list and enter opens what is highlighted', async () => {
+  const { doc, window, effects } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+  const input = await typeSearch(doc, window, 'матри');
+
+  const down = () => input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true, cancelable: true }));
+  down();
+  down();
+  assert.equal(rows(doc)[1].getAttribute('aria-selected'), 'true');
+
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }));
+  assert.equal(effects.navigated.at(-1), 'https://rezka-ua.tv/films/fiction/982-matrica-perezagruzka-2003-latest.html');
+});
+
+test('enter with nothing highlighted still runs the plain search', async () => {
+  const { doc, window, effects } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+  const input = await typeSearch(doc, window, 'матри');
+
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }));
+
+  assert.equal(effects.navigated.at(-1), '/search/?do=search&subaction=search&q=%D0%BC%D0%B0%D1%82%D1%80%D0%B8');
+});
+
+test('escape closes the suggestions', async () => {
+  const { doc, window } = load(seriesPage(), { suggest: LIVE });
+  await settle();
+  const input = await typeSearch(doc, window, 'матри');
+
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }));
+
+  assert.equal(el(doc, 'sugg').hidden, true);
+});
+
+test('an endpoint that answers with nothing useful shows nothing', async () => {
+  const { doc, window } = load(seriesPage(), { suggest: '<div>По вашему запросу ничего не найдено</div>' });
+  await settle();
+
+  await typeSearch(doc, window, 'матри');
+
+  assert.equal(el(doc, 'sugg').hidden, true);
+});
+
+// --------------------------------------------------- typing vs. the player ----
+
+test('a space typed into the search box is a space, not a pause', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  assert.equal(el(doc, 'video').paused, false);
+
+  // The event crosses the shadow boundary, where its target is rewritten to the
+  // host element. Only the composed path still knows an input was involved.
+  el(doc, 'q').dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: ' ', bubbles: true, composed: true, cancelable: true,
+  }));
+
+  assert.equal(el(doc, 'video').paused, false, 'the film carries on');
+});
+
+test('leaving the stage puts the info page back where it was', async () => {
+  const { doc, window } = await ready();
+  const scrolled = [];
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 640 });
+  window.scrollTo = (x, y) => scrolled.push(y);
+
+  el(doc, 'watch').click();
+  el(doc, 'leave').click();
+
+  assert.deepEqual(scrolled, [640], 'back to the same place in the page');
+});
+
+test('the escape hatch unpins the page as well as removing our UI', async () => {
+  const { doc } = await ready();
+  el(doc, 'watch').click();
+  assert.equal(doc.documentElement.hasAttribute('data-rzk-watch'), true);
+
+  el(doc, 'restore').click();
+
+  assert.equal(doc.documentElement.hasAttribute('data-rzk-watch'), false,
+    'the site can scroll again');
+  assert.equal(doc.getElementById('rzk-app'), null);
+});
+
+// -------------------------------------------------------------- scrubbing ----
+// jsdom lays nothing out, so the bars get a size to measure against. The
+// arithmetic from a pointer position to a moment in the film is the point.
+
+const measured = (node, width = 200, left = 0) => {
+  node.getBoundingClientRect = () => ({ left, width, top: 0, height: 4, right: left + width, bottom: 4 });
+  return node;
+};
+
+const pointer = (window, node, type, clientX) =>
+  node.dispatchEvent(new window.PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX }));
+
+/** A film on the stage, with a known duration and a measurable scrub bar. */
+async function playing() {
+  const kit = await ready();
+  el(kit.doc, 'watch').click();
+  const video = el(kit.doc, 'video');
+  video.__duration = 600;
+  video.dispatchEvent(new kit.window.Event('durationchange'));
+  measured(el(kit.doc, 'scrub'));
+  measured(el(kit.doc, 'vol'), 80);
+  return kit;
+}
+
+test('clicking along the bar seeks there', async () => {
+  const { doc, window } = await playing();
+
+  pointer(window, el(doc, 'scrub'), 'pointerdown', 50);
+  pointer(window, el(doc, 'scrub'), 'pointerup', 50);
+
+  assert.equal(el(doc, 'video').currentTime, 150, 'a quarter of ten minutes');
+});
+
+test('a drag previews the moment and only commits on release', async () => {
+  const { doc, window } = await playing();
+  const video = el(doc, 'video');
+
+  pointer(window, el(doc, 'scrub'), 'pointerdown', 20);
+  assert.equal(video.currentTime, 60, 'the press itself seeks');
+
+  pointer(window, el(doc, 'scrub'), 'pointermove', 160);
+  assert.equal(video.currentTime, 60, 'dragging does not drag the film with it');
+  assert.equal(el(doc, 'fill').style.width, '80%', 'the bar leads');
+  assert.equal(el(doc, 'time').textContent, '8:00 / 10:00');
+  assert.equal(el(doc, 'bubble').textContent, '8:00');
+
+  pointer(window, el(doc, 'scrub'), 'pointerup', 160);
+  assert.equal(video.currentTime, 480, 'release is what seeks');
+});
+
+test('a running film does not fight the bar being dragged', async () => {
+  const { doc, window } = await playing();
+  const video = el(doc, 'video');
+
+  pointer(window, el(doc, 'scrub'), 'pointerdown', 20);
+  pointer(window, el(doc, 'scrub'), 'pointermove', 160);
+  video.__currentTime = 61;
+  video.dispatchEvent(new window.Event('timeupdate'));
+
+  assert.equal(el(doc, 'fill').style.width, '80%', 'still where the drag left it');
+});
+
+test('hovering the bar reads out the moment without moving anything', async () => {
+  const { doc, window } = await playing();
+  const before = el(doc, 'fill').style.width;
+
+  pointer(window, el(doc, 'scrub'), 'pointermove', 100);
+
+  assert.equal(el(doc, 'bubble').textContent, '5:00');
+  assert.equal(el(doc, 'fill').style.width, before, 'the playhead is untouched');
+  assert.equal(el(doc, 'video').currentTime, 0);
+});
+
+test('volume follows the drag as it happens', async () => {
+  const { doc, window } = await playing();
+
+  pointer(window, el(doc, 'vol'), 'pointerdown', 40);
+  assert.equal(el(doc, 'video').volume, 0.5);
+
+  pointer(window, el(doc, 'vol'), 'pointermove', 0);
+  assert.equal(el(doc, 'video').volume, 0);
+  assert.equal(el(doc, 'video').muted, true, 'dragged to nothing is muted');
+});
+
+// ------------------------------------------------------------ broken images ----
+
+test('a poster that will not load leaves a frame, not a broken image', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+
+  const poster = shadow(doc).querySelector('.art .poster');
+  poster.dispatchEvent(new window.Event('error'));
+
+  assert.equal(shadow(doc).querySelector('.art .poster'), null, 'the broken image is gone');
+  assert.ok(shadow(doc).querySelector('.art.blank'), 'an empty frame in its place');
+});
+
+test('a cast photo that will not load falls back to an initial', async () => {
+  const { doc, window } = load(seriesPage());
+  await settle();
+
+  const shot = shadow(doc).querySelector('.face .shot');
+  shot.querySelector('img').dispatchEvent(new window.Event('error'));
+
+  assert.equal(shot.querySelector('img'), null);
+  assert.equal(shot.textContent.trim(), 'Т');
+});
+
+test('leaving the stage hands focus back to the button that opened it', async () => {
+  const { doc } = await ready();
+  el(doc, 'watch').click();
+
+  el(doc, 'leave').click();
+
+  assert.equal(shadow(doc).activeElement, el(doc, 'watch'));
+});
+
+test('a stall is announced, and clears when the film resumes', async () => {
+  const { doc, window } = await playing();
+  const video = el(doc, 'video');
+
+  assert.equal(el(doc, 'spin').hidden, true);
+
+  video.dispatchEvent(new window.Event('waiting'));
+  assert.equal(el(doc, 'spin').hidden, false, 'waiting on the network');
+
+  video.dispatchEvent(new window.Event('playing'));
+  assert.equal(el(doc, 'spin').hidden, true);
+});
+
+test('the first buffer sits under the poster rather than on top of it', async () => {
+  const { doc, window } = await ready();
+  const video = el(doc, 'video');
+
+  assert.equal(el(doc, 'veil').hidden, false, 'nothing has played yet');
+  video.dispatchEvent(new window.Event('waiting'));
+
+  assert.equal(el(doc, 'spin').hidden, true, 'the poster is already saying "not yet"');
+});
+
+test('the menu opens its submenus for the keyboard too', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  rightClick(window, el(doc, 'stage'));
+
+  const row = shadow(doc).querySelector('[data-sub="quality"]');
+  assert.equal(row.getAttribute('tabindex'), '0', 'reachable by tab');
+  row.dispatchEvent(new window.FocusEvent('focusin', { bubbles: true }));
+
+  assert.ok(row.classList.contains('open'));
+  assert.equal(row.getAttribute('aria-expanded'), 'true');
 });

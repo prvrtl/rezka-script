@@ -1,6 +1,6 @@
 {
   "name": "rezka-script",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "description": "A userscript that pulls the direct video URL out of HDrezka player pages and gives you a small panel to download it, copy the link, or hand it off to Leech.",
   "main": "rezka-downloader.user.js",
   "private": true,

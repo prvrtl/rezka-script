@@ -55,6 +55,32 @@ const head = ({ title, year, type, poster, descr, url, duration }) => `
 
 const infoRow = (k, v) => `<tr><td class="l">${k}:</td><td>${v}</td></tr>`;
 
+/**
+ * A person, exactly as the site marks one up: schema.org itemprops, a link to
+ * their page, and a photo on the wrapper. The cast row is a colspan cell with
+ * no key column, which is why it never reaches the info table.
+ */
+const person = (role, { id, name, slug, photo }) => `
+  <span class="item"><span class="person-name-item" itemprop="${role}" itemscope
+        itemtype="http://schema.org/Person" data-id="${id}"
+        ${photo ? `data-photo="${photo}"` : ''}>
+    <a href="https://rezka-ua.tv/person/${id}-${slug}/" itemprop="url"><span itemprop="name">${name}</span></a>
+  </span></span>`;
+
+export const DIRECTOR = { id: '241629', name: 'Масаюки Судзуки', slug: 'masayuki-sudzuki', photo: 'https://static.example.net/d.jpg' };
+export const CAST = [
+  { id: '93379', name: 'Такаси Соримати', slug: 'takasi-sorimati', photo: 'https://static.example.net/a1.jpg' },
+  { id: '87415', name: 'Нанако Мацусима', slug: 'nanako-macusima' },
+];
+
+const crewRows = () => `
+  <tr><td class="l"><h2>Режиссер</h2>:</td><td>
+    <div class="persons-list-holder">${person('director', DIRECTOR)}</div></td></tr>
+  <tr><td colspan="2"><div class="persons-list-holder">
+    <span class="l inline"><h2>В ролях актеры</h2>: </span>
+    ${CAST.map(p => person('actor', p)).join(',')}
+  </div></td></tr>`;
+
 const ratingBlock = (c, score, votes) => `
   <div class="${c.rating}">
     <span itemprop="average">${score}</span><span itemprop="votes">${votes}</span>
@@ -131,6 +157,7 @@ export const seriesPage = ({
     <table class="${c.info}">
       ${infoRow('Страна', 'Япония')}
       ${infoRow('Жанр', '<span itemprop="genre">Комедии</span>, <span itemprop="genre">Драмы</span>')}
+      ${crewRows()}
     </table>
     <div class="${c.descr}">Краткое описание сериала.</div>
 

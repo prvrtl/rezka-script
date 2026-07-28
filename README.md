@@ -18,15 +18,41 @@ Updates come from this repo, so the extension picks up new versions on its own.
 
 ## What it replaces
 
-**Watch pages.** Title, original title, and a facts line (rating, year, country, genre,
-runtime) above a real video element playing the direct file — no Premium banner, no player
-chrome you didn't ask for. Under it: voice, season and quality pickers, an episode grid,
-and Download / Ссылка / Leech. Synopsis and the info table sit below.
+**Watch pages** are two pages, not one.
+
+*The info page* is where you decide: poster, title, original title, a facts line (rating,
+year, country, genre, runtime), the synopsis, the cast, the details table — and one blue
+**Watch** button. Around it sit the things that change what gets played or saved: voice,
+season and quality pickers, the episode grid, and Download / Copy link / Leech. If you
+stopped partway through before, the button reads *Resume · 1:02:05*.
+
+*The stage* is where you watch. Pressing Watch takes the whole page away — header,
+pickers, text, all of it — and leaves a single frame on a dark sheet, sized to fill the
+window and shaped to the film's own aspect ratio so nothing is letterboxed. Around it is
+an ambient glow: a 48×27 copy of the current frame, blurred past recognition, so the light
+in the room comes off the picture. Controls and cursor leave after a few still seconds and
+come back on the first movement. `Esc` or *Details* returns to the info page, pausing
+where you were and putting the scroll back where you left it.
 
 **Navigation.** The header carries the logo, four links — Films, Series, Top films,
 Top shows — and the search box. The top lists are the site's own `/films/best/` and
 `/series/best/`, not an invented sort parameter. The current section is marked, with the
 longest match winning so `/films/best/` reads as *Top films* rather than *Films*.
+
+**Search suggestions.** Typing in the header box asks the site's own live-search endpoint
+and lists what it answers with — title, original name and year, score — with arrow keys to
+walk the list and Enter to open one. Nothing is asked for until typing pauses, and an
+answer that arrives after the box has moved on is dropped. Enter with nothing highlighted
+runs the plain search, exactly as before.
+
+**People are links.** Director and cast are read from the page's schema.org markup, so
+each name leads to their page on the site. The cast row is a `colspan` cell with no key
+column and never reaches the info table at all — it is read separately.
+
+**When things are missing.** The CDN is not always willing. A poster that fails to load
+leaves an empty frame and a cast photo that fails leaves an initial, never a broken image.
+`prefers-reduced-motion` turns off the frame-by-frame glow and leaves the poster's, which
+does not move. Leaving the stage hands focus back to the button that opened it.
 
 **Catalog and search.** The same card everywhere: cover, kind badge, title, and the
 `1996, США, Фантастика` line. Covers load lazily, pagination is carried through, and the
@@ -147,9 +173,52 @@ cushion readout still works, just without absolute figures.
 
 ## The player
 
-Plays the direct MP4 with keyboard control (`space`/`k`, `←`/`→`, `f`, `m`), a buffer bar,
-volume, fullscreen, and resume-where-you-left-off per episode. Finishing an episode rolls
-into the next one.
+Plays the direct MP4 with a buffer bar, volume, fullscreen, and
+resume-where-you-left-off per episode. Finishing an episode rolls into the next one.
+
+The bar can be dragged, not only clicked. Hovering it reads out the moment under the
+cursor without disturbing playback; a drag lets the bar run ahead of the film and commits
+on release, because seeking on every intermediate position would be a range request into a
+file that is still arriving. If the film stalls waiting on the network a ring says so —
+but not for the first buffer, where the poster is already saying *not yet*.
+
+When a wide film meets a narrow window the picture can end up shorter than the controls
+that would sit on it. Below that point the controls and the title step off the picture and
+use the black around it instead, so nothing is ever covering the film.
+Keyboard, on the stage: `space`/`k` play, `←`/`→` seek, `↑`/`↓` volume, `f` fullscreen,
+`m` mute, `n` next episode, `Esc` back to the info page. Double-click is fullscreen. None
+of it fires while you are typing — the shortcuts read the event's composed path, so a
+space typed into the search box is a space and not a pause.
+
+**Right-click the film** for everything the info page offers and the things only a playing
+film has:
+
+```
+▶ Pause                    Space
+▸ Next episode
+▸ Picture in picture
+⛶ Fullscreen                   F
+──────────────────────────────
+   Quality      1080p  ›
+   Voice   Multi-voice VO  ›
+   Subtitles  English  ›
+   Speed       Normal  ›
+   Episode  Episode 1  ›
+──────────────────────────────
+↓ Download
+🔗 Copy link
+↗ Send to Leech
+──────────────────────────────
+▣ Native player
+‹ Back to details            Esc
+   11.4 Mbps · 62s buffered
+```
+
+Rows that mean nothing here are not shown: no episode list on a film, no voice row when
+there is only one, no subtitles row when the release carries none. The same menu opens
+from the `⋯` button in the player chrome. A subtitle chosen here outlives the track list,
+which is rebuilt from scratch on every quality, voice and episode change — and it wins over
+both the response's own default and the browser's language-matching.
 
 **Native player.** A *Native player* button hands the frame to the browser's own controls,
 which bring a fuller menu than is worth rebuilding by hand: subtitles, playback speed,
@@ -191,6 +260,10 @@ On load it prefers a Ukrainian voiceover when one exists, and moves off a PRO-on
 | `api` | `/ajax/get_cdn_series/`, parsing the quality list, ranking labels |
 | `store` | what's loaded and selected, keyed by voice + season + episode |
 | `player` | the `<video>` element and its chrome |
+| `glow` | the ambient light, sampled off the frame |
+| `idle` | when the controls and the cursor leave |
+| `cmenu` | the right-click menu and its submenus |
+| `suggest` | the header's type-ahead |
 | `i18n` | glossary and on-device translation |
 | `speed` | buffer cushion, throughput and file sizes |
 | `batch` | the whole-show download queue |

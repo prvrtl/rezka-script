@@ -19,7 +19,7 @@
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Rezka Downloader — the rebuilt player interface, with voice and quality pickers and a download button.">
+<meta property="og:image:alt" content="Rezka Downloader — the rebuilt interface: an info page with a Watch button, and a distraction-free player lit by an ambient glow.">
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Rezka Downloader — a new interface for HDrezka">
@@ -113,23 +113,50 @@
            font-weight: 600; font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .score i { color: #f5c451; font-style: normal; }
 
-  .screen { position: relative; margin-top: 16px; aspect-ratio: 16/9; border-radius: 12px;
-            overflow: hidden; border: 1px solid var(--line); background: #05070a;
-            display: grid; place-items: center; }
-  .still { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  /* The still is absolutely positioned, so the button needs its own stacking
-     position or it paints underneath. */
-  .play { position: relative; z-index: 1;
-          width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.95);
-          display: grid; place-items: center; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
-  .play::after { content: ''; width: 0; height: 0; margin-left: 4px;
-                 border-left: 17px solid #0a0a0d;
-                 border-top: 11px solid transparent; border-bottom: 11px solid transparent; }
-  .chrome { position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 12px 10px;
-            background: linear-gradient(to top, rgba(0,0,0,.8), transparent); }
-  .track { height: 3px; border-radius: 3px; background: rgba(255,255,255,.25); position: relative; }
-  .track i { position: absolute; inset: 0 auto 0 0; width: 34%; border-radius: 3px; background: var(--accent); }
-  .row { display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  /* the info page */
+  .hero-in { display: grid; grid-template-columns: 168px 1fr; gap: 24px; align-items: start; }
+  .art { aspect-ratio: 2/3; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+         box-shadow: 0 18px 44px rgba(0,0,0,.55); }
+  .art svg, .film svg, .glow svg { width: 100%; height: 100%; display: block; }
+  .side { min-width: 0; }
+  .synop { margin-top: 12px; max-width: 62ch; color: var(--dim); font-size: 13.5px; }
+  .watch { display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px 11px 16px;
+           border-radius: 11px; color: #fff; font-size: 14.5px; font-weight: 620;
+           background: linear-gradient(180deg, #2f97ff, #0a6cf0);
+           box-shadow: 0 10px 24px rgba(10,132,255,.34), inset 0 1px 0 rgba(255,255,255,.22); }
+  .watch::before { content: ''; width: 0; height: 0;
+                   border-left: 11px solid #fff;
+                   border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+
+  /* watch mode */
+  .caption { margin: 30px 0 16px; text-align: center; color: var(--faint);
+             font-family: var(--mono); font-size: 12.5px; letter-spacing: .1em;
+             text-transform: uppercase; }
+  .theatre { display: grid; place-items: center; overflow: hidden; padding: clamp(16px, 4vw, 46px);
+             border: 1px solid var(--line); border-radius: 16px;
+             background: radial-gradient(130% 100% at 50% 42%, #0a0a11, #060609 62%, #030304); }
+  .reel { position: relative; width: 100%; aspect-ratio: 2.35/1; }
+  /* The same picture, blurred past recognition — which is what the script does
+     with real frames, forty times a second. */
+  .glow { position: absolute; inset: 0; border-radius: 40px; overflow: hidden;
+          transform: scale(1.07); filter: blur(44px) saturate(1.6); opacity: .68;
+          pointer-events: none; }
+  .film { position: absolute; inset: 0; border-radius: 12px; overflow: hidden;
+          border: 1px solid rgba(255,255,255,.07); box-shadow: 0 30px 70px rgba(0,0,0,.6); }
+  .topbar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center;
+            gap: 12px; padding: 12px 14px 30px; color: #fff; font-size: 12.5px;
+            background: linear-gradient(to bottom, rgba(0,0,0,.6), transparent); }
+  .topbar .back { padding: 6px 12px 6px 9px; border-radius: 9px;
+                  border: 1px solid rgba(255,255,255,.14); background: rgba(22,22,28,.6); }
+  .topbar .now { color: rgba(255,255,255,.7); }
+
+  .chrome { position: absolute; left: 0; right: 0; bottom: 0; padding: 34px 14px 11px;
+            background: linear-gradient(to top, rgba(0,0,0,.82), transparent); }
+  .track { height: 4px; border-radius: 4px; background: rgba(255,255,255,.24); position: relative; }
+  .track i { position: absolute; inset: 0 auto 0 0; width: 34%; border-radius: 4px; background: var(--accent); }
+  .track b { position: absolute; top: 50%; left: 34%; width: 12px; height: 12px; border-radius: 50%;
+             background: #fff; transform: translate(-50%,-50%); box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 10px;
          color: rgba(255,255,255,.85); font-size: 12px; font-variant-numeric: tabular-nums; }
 
   .strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
@@ -209,6 +236,9 @@
     .nav, .fakesearch { display: none; }
     .hero { padding: 68px 0 52px; }
     section { padding-bottom: 64px; }
+    .hero-in { grid-template-columns: 108px 1fr; gap: 16px; }
+    .title { font-size: 20px; }
+    .synop { display: none; }
   }
 </style>
 </head>
@@ -224,6 +254,67 @@
       <text x="16" y="23" text-anchor="middle" fill="#fff" font-size="20" font-weight="700"
             font-family="-apple-system, BlinkMacSystemFont, sans-serif">R</text>
     </symbol>
+
+    <!-- Original artwork. Not a frame from any film. Drawn once in a 160×90
+         user space and used three times: as a poster cropped to 2:3, as the
+         film itself, and — blurred past recognition — as the light around it,
+         which is exactly what the script does with real frames. -->
+    <g id="still">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#16323f"/>
+          <stop offset=".45" stop-color="#123043"/>
+          <stop offset="1" stop-color="#070d14"/>
+        </linearGradient>
+        <radialGradient id="sun" cx=".72" cy=".62" r=".46">
+          <stop offset="0" stop-color="#ff9d4d" stop-opacity=".85"/>
+          <stop offset=".45" stop-color="#c9622a" stop-opacity=".35"/>
+          <stop offset="1" stop-color="#c9622a" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#8fd2e6" stop-opacity="0"/>
+          <stop offset="1" stop-color="#8fd2e6" stop-opacity=".16"/>
+        </linearGradient>
+        <linearGradient id="shaft" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffd9a8" stop-opacity=".20"/>
+          <stop offset="1" stop-color="#ffd9a8" stop-opacity="0"/>
+        </linearGradient>
+        <filter id="grain">
+          <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
+          <feColorMatrix type="saturate" values="0"/>
+        </filter>
+        <filter id="soft"><feGaussianBlur stdDeviation=".6"/></filter>
+      </defs>
+
+      <rect width="160" height="90" fill="url(#sky)"/>
+      <rect width="160" height="90" fill="url(#sun)"/>
+
+      <!-- distant towers -->
+      <g fill="#0b1620" opacity=".85" filter="url(#soft)">
+        <rect x="8" y="40" width="9" height="50"/><rect x="21" y="33" width="7" height="57"/>
+        <rect x="32" y="45" width="11" height="45"/><rect x="47" y="28" width="8" height="62"/>
+        <rect x="59" y="47" width="6" height="43"/><rect x="92" y="36" width="10" height="54"/>
+        <rect x="106" y="44" width="7" height="46"/><rect x="118" y="30" width="9" height="60"/>
+        <rect x="132" y="46" width="12" height="44"/><rect x="148" y="38" width="8" height="52"/>
+      </g>
+
+      <!-- light shafts -->
+      <g opacity=".55">
+        <polygon points="46,0 54,0 40,90 24,90" fill="url(#shaft)"/>
+        <polygon points="104,0 112,0 128,90 112,90" fill="url(#shaft)"/>
+      </g>
+
+      <rect y="52" width="160" height="38" fill="url(#haze)"/>
+
+      <!-- foreground silhouette -->
+      <g fill="#03060a">
+        <ellipse cx="38" cy="74" rx="6.4" ry="7.6"/>
+        <path d="M22 90c0-9 7.2-15 16-15s16 6 16 15z"/>
+      </g>
+      <rect y="86" width="160" height="4" fill="#03060a"/>
+
+      <rect width="160" height="90" filter="url(#grain)" opacity=".07"/>
+    </g>
   </defs>
 </svg>
 
@@ -257,6 +348,8 @@
 
   <section class="stage rise">
     <div class="wrap">
+
+      <!-- The info page: everything you need to decide, and one button. -->
       <div class="frame">
         <div class="bar">
           <svg class="mark"><use href="#logo"/></svg><b>Rezka</b>
@@ -266,93 +359,63 @@
           <div class="fakesearch">Search films and shows</div>
         </div>
         <div class="body">
-          <div class="title">Great Teacher Onizuka</div>
-          <div class="under">Крутой учитель Онидзука</div>
-          <div class="facts">
-            <span class="score"><i>★</i>9.60</span>
-            <span>1998</span><span class="dot"></span>
-            <span>Japan</span><span class="dot"></span>
-            <span>Comedy, Drama, Adventure</span><span class="dot"></span>
-            <span>45 min</span>
-          </div>
+          <div class="hero-in">
+            <div class="art">
+              <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><use href="#still"/></svg>
+            </div>
+            <div class="side">
+              <div class="title">Great Teacher Onizuka</div>
+              <div class="under">Крутой учитель Онидзука</div>
+              <div class="facts">
+                <span class="score"><i>&#9733;</i>9.60</span>
+                <span>1998</span><span class="dot"></span>
+                <span>Japan</span><span class="dot"></span>
+                <span>Comedy, Drama, Adventure</span><span class="dot"></span>
+                <span>45 min</span>
+              </div>
+              <p class="synop">A 22-year-old ex-biker decides on a career in teaching. Most schools
+                would rather he did not.</p>
 
-          <div class="screen">
-            <!-- Original artwork. Not a frame from any film. -->
-            <svg class="still" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-              <defs>
-                <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#16323f"/>
-                  <stop offset=".45" stop-color="#123043"/>
-                  <stop offset="1" stop-color="#070d14"/>
-                </linearGradient>
-                <radialGradient id="sun" cx=".72" cy=".62" r=".46">
-                  <stop offset="0" stop-color="#ff9d4d" stop-opacity=".85"/>
-                  <stop offset=".45" stop-color="#c9622a" stop-opacity=".35"/>
-                  <stop offset="1" stop-color="#c9622a" stop-opacity="0"/>
-                </radialGradient>
-                <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#8fd2e6" stop-opacity="0"/>
-                  <stop offset="1" stop-color="#8fd2e6" stop-opacity=".16"/>
-                </linearGradient>
-                <linearGradient id="shaft" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#ffd9a8" stop-opacity=".20"/>
-                  <stop offset="1" stop-color="#ffd9a8" stop-opacity="0"/>
-                </linearGradient>
-                <filter id="grain">
-                  <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
-                  <feColorMatrix type="saturate" values="0"/>
-                </filter>
-                <filter id="soft"><feGaussianBlur stdDeviation="1.6"/></filter>
-              </defs>
-
-              <rect width="160" height="90" fill="url(#sky)"/>
-              <rect width="160" height="90" fill="url(#sun)"/>
-
-              <!-- distant towers -->
-              <g fill="#0b1620" opacity=".85" filter="url(#soft)">
-                <rect x="8" y="40" width="9" height="50"/><rect x="21" y="33" width="7" height="57"/>
-                <rect x="32" y="45" width="11" height="45"/><rect x="47" y="28" width="8" height="62"/>
-                <rect x="59" y="47" width="6" height="43"/><rect x="92" y="36" width="10" height="54"/>
-                <rect x="106" y="44" width="7" height="46"/><rect x="118" y="30" width="9" height="60"/>
-                <rect x="132" y="46" width="12" height="44"/><rect x="148" y="38" width="8" height="52"/>
-              </g>
-
-              <!-- light shafts -->
-              <g opacity=".55">
-                <polygon points="46,0 54,0 40,90 24,90" fill="url(#shaft)"/>
-                <polygon points="104,0 112,0 128,90 112,90" fill="url(#shaft)"/>
-              </g>
-
-              <rect y="52" width="160" height="38" fill="url(#haze)"/>
-
-              <!-- foreground silhouette -->
-              <g fill="#03060a">
-                <ellipse cx="38" cy="74" rx="6.4" ry="7.6"/>
-                <path d="M22 90c0-9 7.2-15 16-15s16 6 16 15z"/>
-              </g>
-              <rect y="86" width="160" height="4" fill="#03060a"/>
-
-              <rect width="160" height="90" filter="url(#grain)" opacity=".07"/>
-            </svg>
-            <div class="play"></div>
-            <div class="chrome">
-              <div class="track"><i></i></div>
-              <div class="row"><span>▶</span><span>15:42 / 45:00</span><span style="flex:1"></span><span>⛶</span></div>
+              <div class="strip">
+                <div class="watch">Watch</div>
+                <div class="pick"><span class="k">Voice</span><span class="v">&#127482;&#127462; Ukrainian</span><span class="c">&#9662;</span></div>
+                <div class="pick"><span class="k">Season</span><span class="v">Season 2</span><span class="c">&#9662;</span></div>
+                <div class="pick"><span class="k">Quality</span><span class="v">1080p</span><span class="c">&#9662;</span></div>
+              </div>
+              <div class="strip">
+                <div class="btn">&#8595; Download</div>
+                <div class="quiet">Copy link</div>
+                <div class="quiet">Leech</div>
+                <div class="quiet">Native player</div>
+              </div>
+              <div class="meter"><span class="led"></span>10.0 Mbps &middot; 65s buffered &middot; 9.1&times; headroom &middot; 470 MB</div>
             </div>
           </div>
-
-          <div class="strip">
-            <div class="pick"><span class="k">Voice</span><span class="v">🇺🇦 Ukrainian</span><span class="c">▾</span></div>
-            <div class="pick"><span class="k">Season</span><span class="v">Season 2</span><span class="c">▾</span></div>
-            <div class="pick"><span class="k">Quality</span><span class="v">1080p</span><span class="c">▾</span></div>
-            <span class="grow"></span>
-            <div class="quiet">Native player</div>
-            <div class="btn">↓ Download</div>
-            <div class="quiet">Copy link</div>
-          </div>
-          <div class="meter"><span class="led"></span>10.0 Mbps · 65s buffered · 9.1× headroom · 470 MB</div>
         </div>
       </div>
+
+      <p class="caption">Press Watch and the page gets out of the way</p>
+
+      <!-- Watch mode: one frame, shaped to the film, lit by its own picture. -->
+      <div class="theatre">
+        <div class="reel">
+          <div class="glow" aria-hidden="true">
+            <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><use href="#still"/></svg>
+          </div>
+          <div class="film">
+            <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><use href="#still"/></svg>
+            <div class="topbar"><span class="back">&#8249; Details</span><span class="now">GTO: Great Teacher Onizuka &middot; S1E1</span></div>
+            <div class="chrome">
+              <div class="track"><i></i><b></b></div>
+              <div class="row">
+                <span>&#10073;&#10073;</span><span>15:42 / 45:00</span>
+                <span style="flex:1"></span><span>&#183;&#183;&#183;</span><span>&#9974;</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </section>
 
@@ -362,10 +425,22 @@
       <div class="grid">
         <div class="cell">
           <h3>Player</h3>
-          <p>The direct file plays in an ordinary video element — keyboard shortcuts, resume
-             where you left off, and it moves to the next episode on its own. One button hands
-             the frame to the browser's own controls, which adds playback speed and
-             picture-in-picture.</p>
+          <p>Deciding and watching are separate pages. The first has the poster, the facts and
+             the pickers; pressing Watch takes all of it away and leaves one frame on a dark
+             sheet, sized to the window and lit by an ambient glow sampled off the picture
+             itself. Controls and cursor leave when you stop moving.</p>
+        </div>
+        <div class="cell">
+          <h3>Right-click the film</h3>
+          <p>Quality, voice, subtitles, playback speed, episode, picture-in-picture, download,
+             copy link — the whole set, without any of it sitting on screen while you watch.
+             Rows that mean nothing for what you're watching aren't shown.</p>
+        </div>
+        <div class="cell">
+          <h3>Search and people</h3>
+          <p>The header box suggests as you type, using the site's own live search: title,
+             original name, year and score. Director and cast are links to their pages,
+             read from the markup the site publishes for search engines.</p>
         </div>
         <div class="cell">
           <h3>Subtitles</h3>
