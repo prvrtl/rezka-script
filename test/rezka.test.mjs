@@ -1788,3 +1788,64 @@ test('fullscreen is recognised through the shadow boundary', async () => {
 
   assert.equal(stage.classList.contains('full'), false);
 });
+
+// ------------------------------------------------------------- the cursor ----
+// Nothing is drawn over the film unless the cursor is moving. The controls are
+// the reader asking for them, not something the player volunteers.
+
+const move = (window, stage, clientX, clientY) =>
+  stage.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
+
+test('the stage starts with nothing on it, and the controls follow the cursor', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  const stage = el(doc, 'stage');
+
+  assert.ok(stage.classList.contains('idle'), 'the film arrives on its own');
+
+  move(window, stage, 400, 200);
+  assert.equal(stage.classList.contains('idle'), false, 'a moved cursor asks for them');
+
+  await settle(2800);
+  assert.ok(stage.classList.contains('idle'), 'and they go once it stops');
+});
+
+test('a paused film keeps the screen to itself as well', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  const stage = el(doc, 'stage');
+
+  el(doc, 'video').pause();
+  move(window, stage, 400, 200);
+  await settle(2800);
+
+  assert.ok(stage.classList.contains('idle'), 'a paused frame is still a frame');
+});
+
+test('the controls do not vanish from under the cursor', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+  const stage = el(doc, 'stage');
+  // jsdom lays nothing out, so the controls get somewhere to be.
+  el(doc, 'chrome').getBoundingClientRect = () =>
+    ({ left: 0, right: 800, top: 700, bottom: 800, width: 800, height: 100 });
+
+  move(window, stage, 400, 750);
+  await settle(2800);
+  assert.equal(stage.classList.contains('idle'), false, 'the cursor is resting on them');
+
+  move(window, stage, 400, 200);
+  await settle(2800);
+  assert.ok(stage.classList.contains('idle'), 'moved back to the film, they go');
+});
+
+test('the glow samples at the film\'s shape, not at a fixed one', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  metadata(window, el(doc, 'video'), { width: 1440, height: 1080 });
+
+  const canvas = el(doc, 'glow');
+  assert.equal(`${canvas.width}x${canvas.height}`, '40x30',
+    'a 4:3 film gets a 4:3 sample, or every colour in it smears sideways');
+});

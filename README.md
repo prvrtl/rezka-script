@@ -29,10 +29,16 @@ stopped partway through before, the button reads *Resume · 1:02:05*.
 *The stage* is where you watch. Pressing Watch takes the whole page away — header,
 pickers, text, all of it — and leaves a single frame on a dark sheet, sized to fill the
 window and shaped to the film's own aspect ratio so nothing is letterboxed. Around it is
-an ambient glow: a 48×27 copy of the current frame, blurred past recognition, so the light
-in the room comes off the picture. Controls and cursor leave after a few still seconds and
-come back on the first movement. `Esc` or *Details* returns to the info page, pausing
-where you were and putting the scroll back where you left it.
+an ambient glow: a 40-pixel-wide copy of the current frame, cut to the film's own shape so
+its colours are not smeared sideways, blurred past recognition and masked so it fades to
+nothing rather than ending at an edge. Left to end at its own edge it reads as a coloured
+bar down the side of the screen, which is not light.
+
+Nothing is drawn over the film unless the cursor is moving. The stage arrives with the
+controls already gone; a moved cursor asks for them and a few still seconds take them back,
+whether or not the film is playing. The one thing that keeps them is the cursor resting on
+them — aiming at the scrub bar must not make it disappear. `Esc` or *Details* returns to
+the info page, pausing where you were and putting the scroll back where you left it.
 
 **Navigation.** The header carries the logo, four links — Films, Series, Top films,
 Top shows — and the search box. The top lists are the site's own `/films/best/` and

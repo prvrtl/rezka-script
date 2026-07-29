@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.7.2
+// @version        3.8
 // @description    Replaces the HDrezka interface with a clean one: an info page, a distraction-free watch mode with a right-click menu, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1191,11 +1191,22 @@
        black bars for the glow to spill out of. */
     .frame { position: relative; aspect-ratio: var(--ar, 16 / 9);
              width: min(calc(100vw - var(--pad) * 2), calc((100vh - var(--pad) * 2) * var(--arn, 1.7778))); }
-    .glow, .ambient { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0;
-                      pointer-events: none; border-radius: 40px; transform: scale(1.08); }
-    .glow { filter: blur(64px) saturate(1.5) brightness(1.02); opacity: .55; transition: opacity .6s ease; }
+    /* The halo has to die out on its own. Left to end at the element's own
+       edge it reads as a coloured bar down the side of the screen — worst in
+       fullscreen, where the pillarbox gives it room to be seen. The mask fades
+       it to nothing well before then, and the blur scales with the window so a
+       phone does not get a desktop's worth of it. */
+    .glow, .ambient {
+      position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0;
+      pointer-events: none; transform: scale(1.14);
+      -webkit-mask-image: radial-gradient(closest-side, #000 48%, transparent 100%);
+      mask-image: radial-gradient(closest-side, #000 48%, transparent 100%);
+    }
+    .glow { filter: blur(clamp(30px, 6vmin, 90px)) saturate(1.25); opacity: .5;
+            transition: opacity .6s ease; }
     .ambient { background-size: cover; background-position: center;
-               filter: blur(64px) saturate(1.4) brightness(.85); opacity: .42; transition: opacity .8s ease; }
+               filter: blur(clamp(30px, 6vmin, 90px)) saturate(1.2) brightness(.9);
+               opacity: .4; transition: opacity .8s ease; }
     /* Once real frames are arriving the poster's glow steps aside. */
     .frame.live .ambient { opacity: 0; }
 
@@ -1237,7 +1248,8 @@
               border-radius: 16px 16px 0 0;
               background: linear-gradient(to bottom, rgba(0,0,0,.62), transparent);
               transition: opacity .22s ease; }
-    .stage:not(.idle) .topbar, .topbar:focus-within { opacity: 1; pointer-events: auto; }
+    .stage:not(.idle) .topbar { opacity: 1; pointer-events: auto; }
+    .stage.idle .topbar, .stage.idle .chrome { pointer-events: none; }
     .topbar .back { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px 8px 10px;
                     border-radius: 10px; border: 1px solid rgba(255,255,255,.14);
                     background: rgba(22,22,28,.6); color: #fff; font-size: 13px; cursor: pointer;
@@ -1250,7 +1262,11 @@
     .chrome { position: absolute; left: 0; right: 0; bottom: 0; padding: 44px 16px 12px; z-index: 2;
               background: linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.3) 55%, transparent);
               opacity: 0; transition: opacity .2s ease; }
-    .stage:not(.idle) .chrome, .chrome:focus-within { opacity: 1; }
+    .stage:not(.idle) .chrome { opacity: 1; }
+    /* Keyboard focus holds the controls open; a mouse click must not, or the
+       button you just pressed pins them to the screen for the rest of the film.
+       Kept as its own rule so a browser without :has() loses only this. */
+    .chrome:has(:focus-visible), .topbar:has(:focus-visible) { opacity: 1; pointer-events: auto; }
     .scrub { position: relative; height: 18px; display: flex; align-items: center; cursor: pointer; }
     .scrub .track { position: relative; height: 4px; width: 100%; border-radius: 4px; background: rgba(255,255,255,.24);
                     transition: height .12s ease; }
@@ -1939,12 +1955,8 @@
         ui.el.veil.hidden = true;
         ui.el.toggle.innerHTML = I.pause;
         glow.start();
-        idle.poke();
       });
-      v.addEventListener('pause', () => {
-        ui.el.toggle.innerHTML = I.play;
-        idle.poke();
-      });
+      v.addEventListener('pause', () => { ui.el.toggle.innerHTML = I.play; });
       // Say when the film is waiting on the network rather than on the reader.
       const stalled = on => { if (ui.el.spin) ui.el.spin.hidden = !on || ui.el.veil?.hidden === false; };
       v.addEventListener('waiting', () => stalled(true));
@@ -2056,6 +2068,13 @@
       if (!v || !frame || !v.videoWidth || !v.videoHeight) return;
       frame.style.setProperty('--ar', `${v.videoWidth} / ${v.videoHeight}`);
       frame.style.setProperty('--arn', String(v.videoWidth / v.videoHeight));
+      // The glow samples into a fixed bitmap that is then stretched back over
+      // the frame. Unless that bitmap has the film's shape too, every colour in
+      // it is smeared sideways on the way out.
+      const c = ui.el.glow;
+      if (!c) return;
+      const w = 40, h = Math.max(1, Math.round((w * v.videoHeight) / v.videoWidth));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     },
 
     /**
@@ -2280,15 +2299,51 @@
   const idle = {
     timer: null,
 
-    poke() {
+    at: null,                // where the pointer last was, in viewport coordinates
+
+    /**
+     * Whether the pointer is resting on the controls rather than the film.
+     *
+     * Asked of the geometry rather than :hover, because the controls are not
+     * hit-testable while hidden: the move that reveals them cannot also put
+     * the browser's hover state on them, and a second move is exactly what a
+     * reader aiming at the scrub bar is not doing.
+     */
+    over() {
+      const r = ui.el.chrome?.getBoundingClientRect();
+      const at = idle.at;
+      if (!r || !at || !r.width) return false;
+      return at.x >= r.left && at.x <= r.right && at.y >= r.top && at.y <= r.bottom;
+    },
+
+    /**
+     * Something happened; show the controls and start counting again.
+     *
+     * They go whether or not the film is playing — a paused frame is still a
+     * frame, and the only thing that should be on screen. What does hold them
+     * open is a menu, or the pointer sitting on them: aiming at the scrub bar
+     * must not make it disappear from under the cursor.
+     */
+    poke(e) {
+      if (e && typeof e.clientX === 'number') idle.at = { x: e.clientX, y: e.clientY };
       ui.el.stage?.classList.remove('idle');
       clearTimeout(idle.timer);
       if (!store.watching) return;
       idle.timer = setTimeout(() => {
-        if (!store.watching || !player.video || player.video.paused) return;
-        if (!ui.el.cmenu?.hidden) return;
+        if (!store.watching) return;
+        // Giving up rather than trying again: the two things that hold the
+        // controls open both end in another poke — closing the menu calls one,
+        // and a cursor that leaves them has to move to do it. Polling for
+        // either would leave a timer running for as long as the film does.
+        if (!ui.el.cmenu?.hidden || idle.over()) return;
         ui.el.stage?.classList.add('idle');
       }, 2600);
+    },
+
+    /** Straight to nothing on screen, without waiting to be left alone. */
+    hide() {
+      clearTimeout(idle.timer);
+      ui.el.stage?.classList.add('idle');
     },
 
     bind() {
@@ -2992,7 +3047,7 @@
         player.shape();
         player.video?.play?.().catch(() => {});
         glow.start();
-        idle.poke();
+        idle.hide();
       } else {
         player.video?.pause?.();
         glow.stop();
