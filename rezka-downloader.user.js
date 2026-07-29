@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.8
+// @version        3.8.1
 // @description    Replaces the HDrezka interface with a clean one: an info page, a distraction-free watch mode with a right-click menu, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1255,8 +1255,18 @@
                     background: rgba(22,22,28,.6); color: #fff; font-size: 13px; cursor: pointer;
                     -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
     .topbar .back:hover { background: rgba(44,44,54,.78); }
-    .topbar .now { font-size: 13.5px; color: rgba(255,255,255,.7); overflow: hidden;
-                   text-overflow: ellipsis; white-space: nowrap; }
+    /* What you are watching, said properly. It sits over the film, so it earns
+       a shadow rather than a plate: the letters stay legible on a bright frame
+       without anything being drawn behind them. */
+    .topbar .now { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .topbar .now .name { font-size: 17.5px; font-weight: 620; letter-spacing: -.018em;
+                         color: #fff; text-shadow: 0 1px 16px rgba(0,0,0,.65);
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Not ".ep": that belongs to the episode buttons on the info page, and
+       borrowing it hands this span their border, their plate and their hover. */
+    .topbar .now .stamp { flex: none; font-size: 13px; color: rgba(255,255,255,.62);
+                          font-variant-numeric: tabular-nums; text-shadow: 0 1px 12px rgba(0,0,0,.65); }
+    .topbar .now .stamp:empty { display: none; }
 
     /* ---- player chrome ---- */
     .chrome { position: absolute; left: 0; right: 0; bottom: 0; padding: 44px 16px 12px; z-index: 2;
@@ -1301,6 +1311,7 @@
        the stage fills the viewport, so fixed here means the stage's own edges. */
     .stage.tight .topbar, .stage.tight .chrome { position: fixed; background: none; }
     .stage.tight .topbar { top: 0; left: 0; right: 0; padding: 12px 14px; }
+    .stage.tight .topbar .now .name { font-size: 15px; }
     .stage.tight .chrome { top: auto; bottom: 0; left: 0; right: 0; padding: 8px 14px 12px; }
     .stage.tight .bigplay { width: 52px; height: 52px; }
 
@@ -1926,7 +1937,10 @@
           </div>
           <div class="topbar">
             <button class="back" data-el="leave" type="button">${I.back}<span>Details</span></button>
-            <span class="now" data-el="stageTitle"></span>
+            <div class="now">
+              <span class="name" data-el="stageTitle"></span>
+              <span class="stamp" data-el="stageTag"></span>
+            </div>
           </div>
         </div>
         ${cmenu.markup()}
@@ -2695,11 +2709,17 @@
         aria-current="${e.id === store.episode}">${esc(e.id)}</button>`).join('');
     },
 
-    /** What is on the stage, for the one line of text allowed over the film. */
+    /**
+     * What is on the stage, for the one line of text allowed over the film.
+     * The name leads and the episode trails it, because on a series the name
+     * is what you are watching and S01E02 is only where you are in it.
+     */
     now() {
       const name = site.original() || site.title();
-      if (!site.isSeries() || !store.season || !store.episode) return name;
-      return `${name} · S${store.season}E${store.episode}`;
+      const episode = site.isSeries() && store.season && store.episode
+        ? `S${String(store.season).padStart(2, '0')}E${String(store.episode).padStart(2, '0')}`
+        : '';
+      return { name, episode };
     },
 
     update() {
@@ -2707,7 +2727,9 @@
       ui.el.strip.innerHTML = watchView.strip();
       ui.el.eps.innerHTML = watchView.episodes();
       ui.el.epsBox.hidden = !ui.el.eps.children.length;
-      ui.el.stageTitle.textContent = watchView.now();
+      const on = watchView.now();
+      ui.el.stageTitle.textContent = on.name;
+      ui.el.stageTag.textContent = on.episode;
       ui.cache();
       watchView.fillMenus();
       watchView.bindStrip();

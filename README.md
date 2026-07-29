@@ -34,6 +34,11 @@ its colours are not smeared sideways, blurred past recognition and masked so it 
 nothing rather than ending at an edge. Left to end at its own edge it reads as a coloured
 bar down the side of the screen, which is not light.
 
+The one line of text allowed over the film is what you are watching: the name set to
+carry, and on a series the episode kept to one side of it in a quieter size, because the
+name is the thing and S01E02 is only where you are in it. Both take a shadow rather than a
+plate, so they stay legible on a bright frame without anything being drawn behind them.
+
 Nothing is drawn over the film unless the cursor is moving. The stage arrives with the
 controls already gone; a moved cursor asks for them and a few still seconds take them back,
 whether or not the film is playing. The one thing that keeps them is the cursor resting on

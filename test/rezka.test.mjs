@@ -1849,3 +1849,23 @@ test('the glow samples at the film\'s shape, not at a fixed one', async () => {
   assert.equal(`${canvas.width}x${canvas.height}`, '40x30',
     'a 4:3 film gets a 4:3 sample, or every colour in it smears sideways');
 });
+
+test('the stage says what is on it, with the episode kept to one side', async () => {
+  const { doc } = await ready();
+  el(doc, 'watch').click();
+
+  assert.equal(el(doc, 'stageTitle').textContent, 'Great Teacher', 'the name leads');
+  assert.equal(el(doc, 'stageTag').textContent, 'S02E01', 'where you are in it trails');
+  assert.equal(el(doc, 'stageTag').className, 'stamp',
+    'not .ep — that class belongs to the episode buttons and brings their plate');
+});
+
+test('a film has a name and nothing after it', async () => {
+  const { doc, window } = load(filmPage());
+  await settle();
+  deliver(window, { tid: 'single', season: '', episode: '', url: streamList.plain });
+  el(doc, 'watch').click();
+
+  assert.equal(el(doc, 'stageTitle').textContent, 'The Quiet House');
+  assert.equal(el(doc, 'stageTag').textContent, '');
+});
