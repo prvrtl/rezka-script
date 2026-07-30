@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Rezka Downloader
 // @namespace      https://greasyfork.org/en/users/1458606-saarmaat
-// @version        3.8.1
+// @version        3.9
 // @description    Replaces the HDrezka interface with a clean one: an info page, a distraction-free watch mode with a right-click menu, plus downloads, copied links and Leech integration.
 // @author         Roman (saarmaat) <gargle_sower_4w@icloud.com>
 // @supportURL     mailto:gargle_sower_4w@icloud.com
@@ -1476,6 +1476,38 @@
 
     /* ---- grid ---- */
     .gtitle { font-size: 20px; font-weight: 640; letter-spacing: -.015em; padding: 26px 0 16px; }
+
+    /* Sort. A rail rather than a row of buttons: these are five views of one
+       listing, and buttons would read as five separate things to press. */
+    .tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+            border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { flex: none; padding: 9px 13px 11px; font-size: 13.5px; color: var(--faint);
+              text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent;
+              margin-bottom: -1px; transition: color .15s ease, border-color .15s ease; }
+    .tabs a:hover { color: var(--ink); }
+    .tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+    .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 18px; }
+    /* .facet, not .drop: the info page's backdrop poster already owns that
+       name and is 480px tall, which this quietly inherited. Third collision in
+       this file, after .bar and .ep. */
+    .facet { position: relative; display: inline-flex; align-items: center; }
+    .facet > span { position: absolute; left: 11px; font-size: 10.5px; color: var(--faint);
+                    pointer-events: none; top: 5px; letter-spacing: .02em; }
+    .facet select { appearance: none; -webkit-appearance: none; font: inherit; font-size: 13px;
+                    color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+                    border-radius: 9px; padding: 19px 30px 7px 10px; cursor: pointer; min-width: 130px; }
+    .facet select:hover { border-color: var(--line-strong); }
+    /* The chevron is drawn rather than an <img>: a background-image would need
+       a data URI, and the select's own arrow cannot be styled. */
+    .facet::after { content: ''; position: absolute; right: 12px; top: 50%; width: 7px; height: 7px;
+                    border-right: 1.8px solid var(--faint); border-bottom: 1.8px solid var(--faint);
+                    transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+    .tally { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--faint); }
+    .tally button { border: 0; background: none; padding: 0; font: inherit; cursor: pointer;
+                    color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+    .tally button:hover { color: var(--ink); }
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 18px 16px; padding-bottom: 20px; }
     .card { display: flex; flex-direction: column; gap: 8px; text-decoration: none; color: inherit; }
     .card .shot { position: relative; aspect-ratio: 2/3; border-radius: 11px; overflow: hidden;
@@ -1563,6 +1595,112 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
   };
 
+  // ------------------------------------------------------------- catalog ----
+  // The site's own browsing grammar, read off captured pages rather than
+  // invented (see fixtures/raw and API.md):
+  //
+  //   section   /films/ /series/            — the two the header offers
+  //   sort      ?filter=last|popular|watching|soon
+  //   genre     /films/drama/               — a path, not a parameter
+  //   best      /films/best/[year]/         — its own listing, and the one
+  //                                           place ?filter= is NOT offered
+  //
+  // Genre lives in the path and sort in the query, so the two compose and a
+  // genre survives changing the sort. Country and year do not compose with
+  // either — the site only has /country/<name>/ and /year/<yyyy>/ as separate
+  // whole-site listings — so those two are refined here instead. See
+  // gridView.parts for why that is possible at all.
+
+  const catalog = {
+    SECTIONS: [
+      { label: 'Films', path: '/films/' },
+      { label: 'TV shows', path: '/series/' }
+    ],
+
+    SORTS: [
+      { label: 'Latest', q: 'last' },
+      { label: 'Popular', q: 'popular' },
+      { label: 'Watching now', q: 'watching' },
+      { label: 'Coming soon', q: 'soon' },
+      // Not a sort of the same listing but a listing of its own, which is why
+      // it carries a path instead of a query and shows no sort strip once open.
+      { label: 'Top rated', best: true }
+    ],
+
+    // Slug -> English, because the interface is English and these are a closed
+    // vocabulary. Films carry five the shows do not, and shows carry two of
+    // their own; each section is offered only what it actually has.
+    GENRES: {
+      action: 'Action', adventures: 'Adventure', arthouse: 'Art-house',
+      biographical: 'Biography', cognitive: 'Educational', comedy: 'Comedy',
+      concert: 'Concert', crime: 'Crime', detective: 'Mystery',
+      documentary: 'Documentary', drama: 'Drama', erotic: 'Erotica',
+      family: 'Family', fantasy: 'Fantasy', fiction: 'Sci-fi', foreign: 'Foreign',
+      historical: 'History', horror: 'Horror', kids: 'Kids', melodrama: 'Romance',
+      military: 'War', musical: 'Musical', realtv: 'Reality TV', russian: 'Russian',
+      short: 'Short', sport: 'Sport', standup: 'Stand-up', telecasts: 'Programmes',
+      theatre: 'Theatre', thriller: 'Thriller', travel: 'Travel',
+      ukrainian: 'Ukrainian', western: 'Western'
+    },
+
+    // Exactly what each section's own drop-down lists, in the site's order of
+    // existence rather than ours: offering /series/kids/ would be a 404.
+    IN: {
+      '/films/': ['western', 'family', 'fantasy', 'biographical', 'arthouse', 'action',
+        'military', 'detective', 'crime', 'adventures', 'drama', 'sport', 'fiction',
+        'comedy', 'melodrama', 'thriller', 'horror', 'musical', 'historical',
+        'documentary', 'erotic', 'kids', 'travel', 'cognitive', 'theatre', 'concert',
+        'standup', 'short', 'russian', 'ukrainian', 'foreign'],
+      '/series/': ['western', 'family', 'fantasy', 'biographical', 'arthouse', 'action',
+        'military', 'detective', 'crime', 'adventures', 'drama', 'sport', 'fiction',
+        'comedy', 'melodrama', 'thriller', 'horror', 'musical', 'historical',
+        'documentary', 'erotic', 'realtv', 'telecasts', 'standup', 'russian',
+        'ukrainian', 'foreign']
+    },
+
+    here() { try { return location.pathname || ''; } catch (e) { return ''; } },
+    query() { try { return new URLSearchParams(location.search || ''); } catch (e) { return new URLSearchParams(); } },
+
+    /** Which of the two sections this page belongs to, or '' for neither. */
+    section() {
+      return catalog.SECTIONS.find(s => catalog.here().startsWith(s.path))?.path || '';
+    },
+
+    /** The genre slug in the path, if the path names one this section has. */
+    genre() {
+      const sec = catalog.section();
+      if (!sec) return '';
+      const rest = catalog.here().slice(sec.length).split('/')[0];
+      return (catalog.IN[sec] || []).includes(rest) ? rest : '';
+    },
+
+    best() {
+      const sec = catalog.section();
+      return Boolean(sec) && catalog.here().slice(sec.length).startsWith('best');
+    },
+
+    /** The sort in force. The site's own default when nothing is asked for. */
+    sort() {
+      if (catalog.best()) return 'best';
+      const q = catalog.query().get('filter');
+      return catalog.SORTS.some(s => s.q === q) ? q : 'last';
+    },
+
+    /**
+     * Where a tab or a genre leads. Genre is a path and sort is a query, so
+     * changing one keeps the other — the whole reason to build these together.
+     */
+    url({ genre = catalog.genre(), sort = catalog.sort() } = {}) {
+      const sec = catalog.section() || '/films/';
+      if (sort === 'best') return `${sec}best/`;
+      const base = genre ? `${sec}${genre}/` : sec;
+      return sort === 'last' ? base : `${base}?filter=${sort}`;
+    },
+
+    /** Whether this page is one the strip makes sense on at all. */
+    browsing() { return Boolean(catalog.section()); }
+  };
+
   // ------------------------------------------------------------------ ui ----
 
   const ui = {
@@ -1614,23 +1752,16 @@
       }
     },
 
-    // Two catalogues and the site's own two "best" listings — the whole of it.
-    NAV: [
-      { label: 'Films', path: '/films/' },
-      { label: 'Series', path: '/series/' },
-      { label: 'Top films', path: '/films/best/', wide: true },
-      { label: 'Top shows', path: '/series/best/', wide: true }
-    ],
-
+    /**
+     * Two links, not four. Sorting used to live up here as "Top films" and
+     * "Top shows", which put one listing of a section on the same footing as
+     * the section itself. It belongs inside, next to the other sorts, so the
+     * header answers only "films or shows?".
+     */
     nav() {
-      let here = '';
-      try { here = location.pathname || ''; } catch (e) {}
-      // Longest match wins, so /films/best/ is "Top films" and not "Films".
-      const active = [...ui.NAV].sort((a, b) => b.path.length - a.path.length)
-        .find(n => here.startsWith(n.path))?.path;
-      return ui.NAV.map(n =>
-        `<a href="${n.path}"${n.wide ? ' class="wide"' : ''}${
-          n.path === active ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`).join('');
+      const active = catalog.section();
+      return catalog.SECTIONS.map(n =>
+        `<a href="${n.path}"${n.path === active ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`).join('');
     },
 
     bar() {
@@ -2518,7 +2649,10 @@
       if (icon) icon.innerHTML = playing ? I.pause : I.play;
       set('cmFs', document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen');
       set('cmMode', store.native ? 'Custom player' : 'Native player');
-      show('pip', typeof document.pictureInPictureEnabled === 'boolean' ? document.pictureInPictureEnabled : false);
+      // Ask the element before the document: Safari answers only the first.
+      show('pip', typeof v?.webkitSupportsPresentationMode === 'function'
+        ? v.webkitSupportsPresentationMode('picture-in-picture')
+        : document.pictureInPictureEnabled === true);
       show('next', actions.after(store.episode) !== null);
 
       const caption = player.caption();
@@ -2931,16 +3065,138 @@
   };
 
   const gridView = {
+    // Refinements applied on top of whatever the page returned. Not persisted:
+    // they describe this page, and carrying them onto the next one would hide
+    // results without saying so.
+    year: '', country: '',
+
     render() {
       const cards = site.cards();
+      const kept = cards.filter(gridView.keeps);
       const pages = site.pages();
       return `
       <main class="wrap">
         <h1 class="gtitle">${esc(site.heading() || 'Catalog')}</h1>
-        ${cards.length ? `<div class="cards">${cards.map(gridView.card).join('')}</div>` : '<p class="empty">Nothing found</p>'}
+        ${gridView.strip()}
+        ${gridView.filters(cards, kept.length)}
+        ${kept.length
+          ? `<div class="cards" data-el="cards">${kept.map(gridView.card).join('')}</div>`
+          : `<p class="empty">${cards.length
+              ? 'Nothing on this page matches' : 'Nothing found'}</p>`}
         ${pages.length ? `<nav class="pager">${pages.map(p =>
           `<a href="${esc(p.url)}">${esc(p.label)}</a>`).join('')}</nav>` : ''}
       </main>`;
+    },
+
+    /**
+     * The site's four sorts plus its "best" listing, as one segmented row.
+     * Genre lives in the path and sort in the query, so every tab here keeps
+     * whichever genre is open — except Top rated, which is a listing of its
+     * own and has no genre or sort of any kind.
+     */
+    strip() {
+      if (!catalog.browsing()) return '';
+      const now = catalog.sort();
+      return `<nav class="tabs" aria-label="Sort">${catalog.SORTS.map(s => {
+        const key = s.best ? 'best' : s.q;
+        return `<a href="${esc(catalog.url({ sort: key }))}"${
+          key === now ? ' aria-current="page"' : ''}>${esc(s.label)}</a>`;
+      }).join('')}</nav>`;
+    },
+
+    /**
+     * Genre is a real navigation — the site has a page for it. Year and country
+     * are not: it only offers /year/2007/ and /country/Россия/ as whole-site
+     * listings that compose with nothing, so those two refine what is already
+     * on screen. The count says so plainly rather than letting a short grid
+     * read as a short catalogue.
+     */
+    filters(cards, kept) {
+      const sec = catalog.section();
+      const years = gridView.spread(cards, p => p.year).sort().reverse();
+      const countries = gridView.spread(cards, p => p.country).sort();
+      if (!sec && !years.length && !countries.length) return '';
+
+      const opt = (v, label, on) =>
+        `<option value="${esc(v)}"${on ? ' selected' : ''}>${esc(label)}</option>`;
+      const drop = (name, label, options) => `
+        <label class="facet">
+          <span>${esc(label)}</span>
+          <select data-el="${name}">${options}</select>
+        </label>`;
+
+      const genreNow = catalog.genre();
+      const genres = sec && !catalog.best()
+        ? drop('fGenre', 'Genre',
+            opt('', 'All genres', !genreNow) +
+            (catalog.IN[sec] || []).map(g =>
+              opt(g, catalog.GENRES[g] || g, g === genreNow)).join(''))
+        : '';
+
+      const refined = gridView.year || gridView.country;
+      return `
+      <div class="filters">
+        ${genres}
+        ${years.length ? drop('fYear', 'Year',
+          opt('', 'Any year', !gridView.year) +
+          years.map(y => opt(y, y, y === gridView.year)).join('')) : ''}
+        ${countries.length ? drop('fCountry', 'Country',
+          opt('', 'Any country', !gridView.country) +
+          countries.map(c => opt(c, c, c === gridView.country)).join('')) : ''}
+        ${refined ? `<span class="tally">${kept} of ${cards.length} on this page
+          <button type="button" data-el="fClear">Clear</button></span>` : ''}
+      </div>`;
+    },
+
+    /**
+     * Year and country come out of the card's own blurb — "1996, USA, Sci-Fi" —
+     * which is the only reason refining by them costs no request at all. A line
+     * that does not start with a year is left out rather than guessed at.
+     */
+    parts(c) {
+      const bits = String(c.meta || '').split(',').map(s => s.trim());
+      return /^\d{4}$/.test(bits[0] || '')
+        ? { year: bits[0], country: bits[1] || '' }
+        : { year: '', country: '' };
+    },
+
+    spread(cards, pick) {
+      const seen = new Set();
+      for (const c of cards) { const v = pick(gridView.parts(c)); if (v) seen.add(v); }
+      return [...seen];
+    },
+
+    keeps(c) {
+      const p = gridView.parts(c);
+      if (gridView.year && p.year !== gridView.year) return false;
+      if (gridView.country && p.country !== gridView.country) return false;
+      return true;
+    },
+
+    bind() {
+      // A genre is somewhere else on the site; year and country are here.
+      ui.el.fGenre?.addEventListener('change', e => {
+        location.href = catalog.url({ genre: e.target.value });
+      });
+      ui.el.fYear?.addEventListener('change', e => {
+        gridView.year = e.target.value; gridView.repaint();
+      });
+      ui.el.fCountry?.addEventListener('change', e => {
+        gridView.country = e.target.value; gridView.repaint();
+      });
+      ui.el.fClear?.addEventListener('click', () => {
+        gridView.year = ''; gridView.country = ''; gridView.repaint();
+      });
+    },
+
+    /** Rebuild the grid in place, leaving the header and its listeners alone. */
+    repaint() {
+      const main = ui.root?.querySelector('main.wrap');
+      if (!main) return;
+      main.outerHTML = gridView.render();
+      ui.cache();
+      ui.mend();
+      gridView.bind();
     },
 
     card(c) {
@@ -3105,6 +3361,16 @@
     pip() {
       const v = player.video;
       if (!v) return;
+      // Safari has never shipped the W3C API — it has its own presentation
+      // modes instead. Without this branch `requestPictureInPicture?.()`
+      // short-circuits to undefined and the row is a silent no-op there:
+      // visible, pressable, and doing nothing at all.
+      if (typeof v.webkitSetPresentationMode === 'function' &&
+          typeof v.requestPictureInPicture !== 'function') {
+        v.webkitSetPresentationMode(
+          v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+        return;
+      }
       if (document.pictureInPictureElement) document.exitPictureInPicture?.();
       else v.requestPictureInPicture?.().catch(() => ui.toast('Picture in picture was refused'));
     },
@@ -3382,7 +3648,7 @@
     guard('render', () => {
       try {
         if (kind === 'watch') initWatch();
-        else ui.mount(gridView.render());
+        else { ui.mount(gridView.render()); gridView.bind(); }
       } catch (e) {
         // Give the real site back rather than stranding the reader.
         clearTimeout(bootTimer);

@@ -45,10 +45,29 @@ whether or not the film is playing. The one thing that keeps them is the cursor 
 them — aiming at the scrub bar must not make it disappear. `Esc` or *Details* returns to
 the info page, pausing where you were and putting the scroll back where you left it.
 
-**Navigation.** The header carries the logo, four links — Films, Series, Top films,
-Top shows — and the search box. The top lists are the site's own `/films/best/` and
-`/series/best/`, not an invented sort parameter. The current section is marked, with the
-longest match winning so `/films/best/` reads as *Top films* rather than *Films*.
+**Navigation.** The header carries the logo, two links — Films and TV shows — and the
+search box. It used to carry four, with *Top films* and *Top shows* beside them; that put
+one listing of a section on the same footing as the section itself, so ordering moved
+down into the section where the rest of it lives. The current section stays marked
+whichever of its listings you are on.
+
+**Sorting** is the site's own, not an invented parameter. A section opens on a rail of
+five: *Latest*, *Popular*, *Watching now* and *Coming soon* map to `?filter=last`,
+`popular`, `watching` and `soon`; *Top rated* is `/films/best/`, which is a listing of its
+own rather than a sort — the site offers no `?filter=` there at all, and neither do we.
+
+**Filtering.** Genre is a path on this site (`/films/drama/`) and sort is a query, so the
+two compose: changing the sort keeps the genre and changing the genre keeps the sort. Each
+section is offered only the genres it actually has — 31 for films, 27 for shows —
+because `/series/kids/` is a 404.
+
+Country and year are a different matter. The site has `/country/Россия/` and `/year/2007/`,
+but only as whole-site listings that compose with nothing — there is no combined query to
+ask. So those two refine what is already on screen instead, which costs no request at all,
+because each card's own blurb is `1996, США, Фантастика` — year, country and genre, right
+there in the grid. A refined page says `12 of 36 on this page` rather than letting a short
+grid read as a short catalogue, and a blurb that does not begin with a year is left out of
+the year list rather than guessed at.
 
 **Search suggestions.** Typing in the header box asks the site's own live-search endpoint
 and lists what it answers with — title, original name and year, score — with arrow keys to
@@ -280,6 +299,7 @@ On load it prefers a Ukrainian voiceover when one exists, and moves off a PRO-on
 | `idle` | when the controls and the cursor leave |
 | `cmenu` | the right-click menu and its submenus |
 | `suggest` | the header's type-ahead |
+| `catalog` | the site's browsing grammar — sections, sorts, genre paths |
 | `i18n` | glossary and on-device translation |
 | `speed` | buffer cushion, throughput and file sizes |
 | `batch` | the whole-show download queue |

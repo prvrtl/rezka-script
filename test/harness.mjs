@@ -135,6 +135,9 @@ export function load(html, {
   // Shadow the binding for the script instead — the file itself is untouched.
   window.__rzkLocation = {
     pathname: new URL(url).pathname,
+    // The sort lives in the query, so a shim without it silently reports every
+    // listing as the site's default.
+    search: new URL(url).search,
     get href() { return url; },
     set href(v) { effects.navigated.push(v); }
   };

@@ -379,6 +379,171 @@ test('search submits to the site\'s own search URL', async () => {
   assert.match(decodeURIComponent(effects.navigated.at(-1)), /матрица/);
 });
 
+// --------------------------------------------------------- sort and filter ----
+// The site's own browsing grammar: sort is ?filter=, genre is a path segment,
+// and the two compose. Country and year do not compose with anything, so those
+// refine what is already on screen instead of asking for another page.
+
+const FILMS = 'https://rezka-ua.tv/films/';
+
+const tabs = (doc) => all(doc, '.tabs a').map((a) => a.textContent.trim());
+const currentTab = (doc) => shadow(doc)?.querySelector('.tabs a[aria-current="page"]')?.textContent.trim();
+const opts = (doc, name) => [...(el(doc, name)?.options ?? [])].map((o) => o.textContent.trim());
+
+test('a section offers the site\'s own five listings', async () => {
+  const { doc } = load(gridPage(), { url: FILMS });
+  await settle();
+
+  assert.deepEqual(tabs(doc), ['Latest', 'Popular', 'Watching now', 'Coming soon', 'Top rated']);
+  assert.equal(currentTab(doc), 'Latest', 'the site\'s default when nothing is asked for');
+});
+
+test('the sort in the URL is the one marked', async () => {
+  const { doc } = load(gridPage(), { url: FILMS + '?filter=watching' });
+  await settle();
+
+  assert.equal(currentTab(doc), 'Watching now');
+});
+
+test('changing sort keeps the genre, because one is a path and one a query', async () => {
+  const { doc } = load(gridPage(), { url: 'https://rezka-ua.tv/films/drama/?filter=popular' });
+  await settle();
+
+  assert.equal(currentTab(doc), 'Popular');
+  const href = (label) =>
+    all(doc, '.tabs a').find((a) => a.textContent.trim() === label).getAttribute('href');
+  assert.equal(href('Watching now'), '/films/drama/?filter=watching');
+  assert.equal(href('Latest'), '/films/drama/', 'the default sort needs no query');
+});
+
+test('top rated is a listing of its own, not a sort', async () => {
+  const { doc } = load(gridPage(), { url: 'https://rezka-ua.tv/films/drama/?filter=popular' });
+  await settle();
+
+  const top = all(doc, '.tabs a').find((a) => a.textContent.trim() === 'Top rated');
+  assert.equal(top.getAttribute('href'), '/films/best/', 'the site offers no genre or sort there');
+});
+
+test('on the best listing the strip still says where you are', async () => {
+  const { doc } = load(gridPage(), { url: 'https://rezka-ua.tv/films/best/' });
+  await settle();
+
+  assert.equal(currentTab(doc), 'Top rated');
+  assert.equal(el(doc, 'fGenre'), null, 'and offers no genre, because that page has none');
+});
+
+test('search results get no sort strip — the site has none to offer', async () => {
+  const { doc } = load(gridPage({ heading: 'Поиск' }),
+    { url: 'https://rezka-ua.tv/search/?do=search&subaction=search&q=zzz' });
+  await settle();
+
+  assert.equal(shadow(doc).querySelector('.tabs'), null);
+});
+
+test('each section is offered only the genres it actually has', async () => {
+  const films = load(gridPage(), { url: FILMS });
+  await settle();
+  const shows = load(gridPage(), { url: 'https://rezka-ua.tv/series/' });
+  await settle();
+
+  assert.ok(opts(films.doc, 'fGenre').includes('Kids'), 'films have a kids section');
+  assert.equal(opts(shows.doc, 'fGenre').includes('Kids'), false, '/series/kids/ would be a 404');
+  assert.ok(opts(shows.doc, 'fGenre').includes('Reality TV'), 'and shows have one films do not');
+  assert.equal(opts(films.doc, 'fGenre')[0], 'All genres');
+});
+
+test('the open genre is the one selected', async () => {
+  const { doc } = load(gridPage(), { url: 'https://rezka-ua.tv/films/drama/' });
+  await settle();
+
+  assert.equal(el(doc, 'fGenre').value, 'drama');
+});
+
+test('picking a genre goes to the site\'s page for it, keeping the sort', async () => {
+  const { doc, window, effects } = load(gridPage(), { url: FILMS + '?filter=popular' });
+  await settle();
+
+  const sel = el(doc, 'fGenre');
+  sel.value = 'horror';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+  assert.equal(effects.navigated.at(-1), '/films/horror/?filter=popular');
+});
+
+test('year and country come off the cards, so refining costs no request', async () => {
+  const { doc, window, effects } = load(gridPage(), { url: FILMS });
+  await settle();
+  const before = effects.xhrs.length;
+
+  assert.deepEqual(opts(doc, 'fYear'), ['Any year', '1999', '1998', '1996'], 'newest first');
+  assert.deepEqual(opts(doc, 'fCountry'), ['Any country', 'Japan', 'USA']);
+
+  const sel = el(doc, 'fCountry');
+  sel.value = 'Japan';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+
+  assert.deepEqual(all(doc, '.card .name').map((n) => n.textContent.trim()), ['Класний керівник']);
+  assert.equal(effects.xhrs.length, before, 'nothing was asked of the site');
+  assert.deepEqual(effects.navigated, [], 'and nothing navigated');
+});
+
+test('a refined page says how much of itself it is showing', async () => {
+  const { doc, window } = load(gridPage(), { url: FILMS });
+  await settle();
+
+  assert.equal(shadow(doc).querySelector('.tally'), null, 'nothing to say when nothing is refined');
+
+  const sel = el(doc, 'fYear');
+  sel.value = '1996';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+
+  assert.match(text(doc, '.tally'), /1 of 3 on this page/);
+  el(doc, 'fClear').click();
+  await settle();
+
+  assert.equal(all(doc, '.card').length, 3);
+  assert.equal(shadow(doc).querySelector('.tally'), null);
+});
+
+test('refining down to nothing says so, rather than claiming nothing exists', async () => {
+  const { doc, window } = load(gridPage(), { url: FILMS });
+  await settle();
+
+  const y = el(doc, 'fYear');
+  y.value = '1996';
+  y.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+  const c = el(doc, 'fCountry');
+  c.value = 'Japan';
+  c.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+
+  assert.match(text(doc, '.empty'), /Nothing on this page matches/);
+});
+
+test('a card whose blurb carries no year is never filtered on a guess', async () => {
+  const { doc, window } = load(gridPage({
+    items: [
+      { id: '1', entity: 'Фильм', title: 'Без года', meta: 'США, Драмы', slug: 'films/drama/1-a' },
+      { id: '2', entity: 'Фильм', title: 'С годом', meta: '2001, США, Драмы', slug: 'films/drama/2-b' },
+    ]
+  }), { url: FILMS });
+  await settle();
+
+  assert.deepEqual(opts(doc, 'fYear'), ['Any year', '2001'], 'no year, no option');
+
+  const sel = el(doc, 'fCountry');
+  sel.value = 'USA';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+
+  // Its first field is a country, not a year — reading it positionally would
+  // have called the country "США" a year and dropped the card.
+  assert.deepEqual(all(doc, '.card .name').map((n) => n.textContent.trim()), ['С годом']);
+});
+
 // ------------------------------------------ independence from the markup ----
 // The site is free to restyle whenever it likes. These run the whole UI against
 // a page where every structural class has been renamed, leaving only what the
@@ -966,39 +1131,38 @@ test('the header carries a logo and the catalogue links', async () => {
   assert.ok(shadow(doc).querySelector('.brand .mark'), 'logo mark rendered');
   assert.equal(text(doc, '.brand .word'), 'Rezka');
 
+  // Two sections, not four links: the "best" listings moved into the sort
+  // strip, where they sit beside the other ways of ordering the same section.
   assert.deepEqual(
     all(doc, '.nav a').map((a) => [a.textContent.trim(), a.getAttribute('href')]),
     [
       ['Films', '/films/'],
-      ['Series', '/series/'],
-      ['Top films', '/films/best/'],
-      ['Top shows', '/series/best/'],
+      ['TV shows', '/series/'],
     ]
   );
 });
 
-test('the current section is marked, longest match winning', async () => {
-  const top = load(gridPage(), { url: 'https://rezka-ua.tv/films/best/' });
-  await settle();
-  assert.equal(
-    all(top.doc, '.nav a[aria-current="page"]').map((a) => a.textContent.trim()).join(),
-    'Top films',
-    '/films/best/ is Top films, not Films'
-  );
-
-  const plain = load(gridPage(), { url: 'https://rezka-ua.tv/films/' });
-  await settle();
-  assert.equal(
-    all(plain.doc, '.nav a[aria-current="page"]').map((a) => a.textContent.trim()).join(),
-    'Films'
-  );
+test('the current section is marked, whichever listing of it you are on', async () => {
+  for (const [url, want] of [
+    ['https://rezka-ua.tv/films/', 'Films'],
+    ['https://rezka-ua.tv/films/best/', 'Films'],
+    ['https://rezka-ua.tv/films/drama/?filter=popular', 'Films'],
+    ['https://rezka-ua.tv/series/', 'TV shows'],
+  ]) {
+    const { doc } = load(gridPage(), { url });
+    await settle();
+    assert.equal(
+      all(doc, '.nav a[aria-current="page"]').map((a) => a.textContent.trim()).join(),
+      want, url
+    );
+  }
 });
 
 test('navigation is present on a watch page too', async () => {
   const { doc } = load(seriesPage(), { url: SERIES_URL });
   await settle();
 
-  assert.equal(all(doc, '.nav a').length, 4);
+  assert.equal(all(doc, '.nav a').length, 2);
   assert.equal(all(doc, '.nav a[aria-current="page"]').length, 1, 'series section marked');
 });
 
@@ -1408,6 +1572,27 @@ test('the menu hands the frame to the browser\'s own controls', async () => {
 
   assert.equal(el(doc, 'video').controls, true);
   assert.equal(el(doc, 'mode').textContent.trim(), 'Custom player', 'the info page agrees');
+});
+
+test('picture in picture works in Safari, which has its own API for it', async () => {
+  const { doc, window } = await ready();
+  el(doc, 'watch').click();
+
+  // Safari has never shipped the W3C API. Without a branch for it,
+  // `requestPictureInPicture?.()` short-circuits and the row is a silent
+  // no-op: visible, pressable, doing nothing.
+  const v = el(doc, 'video');
+  const asked = [];
+  delete v.requestPictureInPicture;
+  v.webkitPresentationMode = 'inline';
+  v.webkitSupportsPresentationMode = (m) => m === 'picture-in-picture';
+  v.webkitSetPresentationMode = (m) => asked.push(m);
+
+  rightClick(window, el(doc, 'stage'));
+  assert.equal(cmRow(doc, 'pip').hidden, false, 'offered, because Safari supports it');
+  cmRow(doc, 'pip').click();
+
+  assert.deepEqual(asked, ['picture-in-picture']);
 });
 
 test('the menu moves to the next episode', async () => {
